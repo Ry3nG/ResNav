@@ -3,24 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 import numpy as np
-from ..constants import (
-    CTRL_LOOKAHEAD_M,
-    CTRL_V_NOMINAL_MPS,
-    CTRL_K_HEADING,
-    CTRL_REPULSE_DIST_M,
-    CTRL_REPULSE_GAIN,
-    CTRL_ATTRACT_GAIN,
-)
 
 
 @dataclass
 class PPAPFConfig:
-    lookahead: float = CTRL_LOOKAHEAD_M
-    v_nominal: float = CTRL_V_NOMINAL_MPS
-    k_heading: float = CTRL_K_HEADING
-    repulse_dist: float = CTRL_REPULSE_DIST_M  # meters
-    repulse_gain: float = CTRL_REPULSE_GAIN
-    attract_gain: float = CTRL_ATTRACT_GAIN
+    lookahead: float = 0.75
+    v_nominal: float = 0.5
+    k_heading: float = 1.5
+    repulse_dist: float = 0.7  # meters
+    repulse_gain: float = 0.8
+    attract_gain: float = 1.2
+    tangential_gain: float = 0.5
 
 
 class PurePursuitAPF:
@@ -69,8 +62,19 @@ class PurePursuitAPF:
                     / max(r * r, 1e-6)
                 )
                 Frep += -mag * u_obs
+        # Simple gap preference: steer tangentially toward the freer side (left/right)
+        left_mask = angles > 0.0
+        right_mask = angles < 0.0
+        # Use minimum distance as conservative side clearance estimate
+        left_min = np.min(ranges[left_mask]) if np.any(left_mask) else np.inf
+        right_min = np.min(ranges[right_mask]) if np.any(right_mask) else np.inf
+        go_left = left_min > right_min
+        # Unit vectors tangential to current heading (left/right)
+        t_left = np.array([-np.sin(th), np.cos(th)])
+        t_right = -t_left
+        Ftan = cfg.tangential_gain * (t_left if go_left else t_right)
         # Resultant desired heading
-        F = cfg.attract_gain * dir_at + Frep
+        F = cfg.attract_gain * dir_at + Frep + Ftan
         if np.linalg.norm(F) < 1e-6:
             theta_des = th
         else:

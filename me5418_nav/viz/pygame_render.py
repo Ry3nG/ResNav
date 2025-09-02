@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 import numpy as np
 
 
@@ -103,14 +103,16 @@ class PygameRenderer:
         # Use actual robot radius from config for realistic rendering
         robot_radius = getattr(env.cfg, "robot_radius", 0.25)
         robot_radius_px = int(robot_radius * self._view.scale)
-        pg.draw.circle(self._screen, (40, 90, 240), (px, py), max(2, robot_radius_px))
+        collided = bool(getattr(env, "_last_collision", False))
+        robot_color = (200, 30, 30) if collided else (40, 90, 240)
+        pg.draw.circle(self._screen, robot_color, (px, py), max(2, robot_radius_px))
 
         # Heading indicator proportional to robot size
         heading_length = robot_radius * 0.8  # slightly smaller than radius
         hx, hy = self._w2s(
             (x + heading_length * np.cos(th), y + heading_length * np.sin(th))
         )
-        pg.draw.line(self._screen, (40, 90, 240), (px, py), (hx, hy), 3)
+        pg.draw.line(self._screen, robot_color, (px, py), (hx, hy), 3)
         try:
             ranges, endpoints = env.lidar.cast(pose, env.grid)
             for i in range(env.lidar.n_beams):
@@ -141,11 +143,18 @@ class PygameRenderer:
                     if isinstance(v, float):
                         v = f"{v:.2f}"
                     lines.append(f"{k}: {v}")
+            # Append collision flag
+            lines.append(f"collision: {collided}")
             y0 = 8
             for line in lines[:18]:
                 surf = self._font.render(line, True, (20, 20, 20))
                 self._screen.blit(surf, (8, y0))
                 y0 += surf.get_height() + 2
+
+        # Big collision banner if collided
+        if collided and self._font is not None:
+            banner = self._font.render("COLLISION", True, (200, 30, 30))
+            self._screen.blit(banner, (self._view.ox + 8, self._view.oy + 8))
 
         pg.display.flip()
         if self._clock is not None:
@@ -167,6 +176,17 @@ class PygameRenderer:
         self._clock = None
         self._surf_grid = None
         self._view = None
+
+    def draw_rgb_array(self, env) -> np.ndarray:
+        """
+        Render the current env frame to the pygame window (off/on screen) and
+        return an RGB numpy array of shape (H, W, 3).
+        """
+        pg = self._ensure_init()
+        self.draw(env)
+        # pygame.surfarray.array3d returns (W, H, 3); transpose to (H, W, 3)
+        frame_whc = pg.surfarray.array3d(self._screen)
+        return np.transpose(frame_whc, (1, 0, 2))
 
     # --------- Internals ----------
     def _ensure_init(self):
@@ -213,7 +233,7 @@ class PygameRenderer:
         vy = int(self._view.oy + (self._view.ymax - y) * self._view.scale)
         return vx, vy
 
-    def _make_grid_surface(self, pg, grid_img: np.ndarray, ws) -> "pg.Surface":
+    def _make_grid_surface(self, pg, grid_img: np.ndarray, ws) -> Any:
         # bool grid -> grayscale surface; True=occupied (dark), False=free (light)
         H, W = grid_img.shape[:2]
         img = np.empty((H, W, 3), dtype=np.uint8)

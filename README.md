@@ -28,47 +28,13 @@ The policy is specifically designed to handle three challenging micro-benchmarks
 2. **Occluded Merge**: Safely cross intersections with limited visibility
 3. **Narrow Counterflow**: Pass oncoming agents in constrained aisles
 
-## Repository Structure
-
-```
-me5418_nav/
-├── constants.py              # Centralized configuration constants
-├── envs/
-│   └── unicycle_nav_env.py  # Gymnasium environment for AMR navigation
-├── models/
-│   └── unicycle.py          # Unicycle kinematic model wrapper
-├── sensors/
-│   └── lidar.py             # 2D LiDAR sensor simulation
-├── maps/
-│   └── s_path.py            # S-curve path generator for testing
-├── controllers/
-│   ├── pure_pursuit_apf.py  # Baseline Pure Pursuit + APF controller
-│   └── pp_apf_trapaware.py  # Enhanced trap-aware variant
-├── rewards/
-│   └── navigation.py        # Reward function implementation
-└── viz/
-    ├── pygame_render.py     # Real-time visualization
-    └── plotting.py          # Post-hoc analysis plots
-
-scripts/
-├── baseline_eval.py         # Evaluate baseline controllers
-├── manual_control.py        # Human teleoperation interface
-├── record_episode.py        # Episode recording utilities
-└── random_agent.py          # Random action baseline
-```
 
 ## Installation
 
-### Using Conda (Recommended)
+### Using Conda
 ```bash
 conda env create -f environment.yml
 conda activate me5418-nav
-pip install -e .
-```
-
-### Using pip
-```bash
-pip install -r requirements.txt
 pip install -e .
 ```
 
@@ -76,18 +42,9 @@ pip install -e .
 
 ### Run Baseline Evaluation
 ```bash
-python -m scripts.baseline_eval --episodes 5 --steps 3000
+python scripts/blockage_demo.py
 ```
 
-### Manual Control
-```bash
-python -m scripts.manual_control
-```
-
-### Record Episodes
-```bash
-python -m scripts.record_episode --controller pp_apf --episodes 10
-```
 
 ## RL Formulation
 
@@ -101,7 +58,6 @@ python -m scripts.record_episode --controller pp_apf --episodes 10
 ## Baselines
 
 - Pure Pursuit + Artificial Potential Fields (PP+APF)
-- Enhanced trap-aware variant with temporal decision-making
 - Dynamic Window Approach (planned)
 
 ## Evaluation Metrics

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, Any
 import numpy as np
+import scipy.ndimage as ndi
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -10,7 +11,6 @@ from gymnasium import spaces
 from roboticstoolbox.mobile.OccGrid import BinaryOccupancyGrid
 from ..models.unicycle import UnicycleModel, UnicycleState
 from ..sensors.lidar import Lidar
-from ..viz.plotting import draw_env
 from ..constants import (
     DT_S,
     GRID_RESOLUTION_M,
@@ -68,6 +68,10 @@ class UnicycleNavEnv(gym.Env if hasattr(gym, "Env") else object):
         self.grid = grid or BinaryOccupancyGrid(
             np.zeros((H, W), dtype=bool), cellsize=self.cfg.res, origin=(0, 0)
         )
+        # Precompute configuration-space (C-space) occupancy by inflating obstacles
+        # with the robot radius. Collision is then center-in-occupied on this grid.
+        self._grid_cspace: BinaryOccupancyGrid = self._build_cspace_grid()
+        self._last_collision: bool = False
         # Path/goal
         self.path_waypoints = path_waypoints  # (M,2) or None
         self.goal_xy = goal_xy
@@ -143,22 +147,22 @@ class UnicycleNavEnv(gym.Env if hasattr(gym, "Env") else object):
         self._step_count += 1
         self.robot.step(action, dt=self.cfg.dt)
         obs = self._get_obs()
-        collision = bool(np.min(obs[: self.cfg.lidar_beams]) < 0.05)
+        # Geometric collision: center-in-occupied on C-space grid
+        x, y, _ = self.robot.as_pose()
+        collision_static = bool(self._grid_cspace.isoccupied((x, y)))
+        collision_dynamic = self._check_dynamic_collisions(x, y)
+        collision = collision_static or collision_dynamic
         success = False
         if self.goal_xy is not None:
             gx, gy = self.goal_xy
-            x, y, _ = self.robot.as_pose()
             if np.hypot(gx - x, gy - y) <= self.cfg.goal_radius:
                 success = True
         terminated = collision or success
         truncated = self._step_count >= self.max_steps
-        from ..constants import REWARD_STEP, REWARD_COLLISION, REWARD_SUCCESS
-
-        reward = (
-            REWARD_STEP
-            + (REWARD_COLLISION if collision else 0.0)
-            + (REWARD_SUCCESS if success else 0.0)
-        )
+        # Classical controller demo does not require learning rewards.
+        # Return a neutral reward to satisfy Gym API without shaping.
+        reward = 0.0
+        self._last_collision = collision
         info = {"collision": collision, "success": success}
         return obs, reward, terminated, truncated, info
 
@@ -166,7 +170,7 @@ class UnicycleNavEnv(gym.Env if hasattr(gym, "Env") else object):
     def render(self):
         if self.render_mode is None:
             return None
-        # Choose pygame for 'human' interactive rendering; matplotlib for rgb_array
+        # Choose pygame for 'human' interactive rendering; also use pygame for rgb_array
         if self.render_mode == "human":
             if self._pg is None:
                 self._pg = PygameRenderer()
@@ -174,24 +178,9 @@ class UnicycleNavEnv(gym.Env if hasattr(gym, "Env") else object):
             self._pg.draw(self)
             return None
         elif self.render_mode == "rgb_array":
-            # lazy-create matplotlib figure/axes
-            if self._fig is None or self._ax is None:
-                import matplotlib.pyplot as plt
-
-                self._fig, self._ax = plt.subplots(figsize=(6, 6))
-            # draw current state using Matplotlib
-            status = getattr(self, "_debug_status", None)
-            draw_env(self, self._ax, status)
-            # convert canvas to RGB array; use renderer dims to handle HiDPI
-            canvas = self._fig.canvas
-            canvas.draw()
-            import numpy as _np
-
-            renderer = canvas.get_renderer()
-            w = int(getattr(renderer, "width", canvas.get_width_height()[0]))
-            h = int(getattr(renderer, "height", canvas.get_width_height()[1]))
-            buf = _np.frombuffer(canvas.tostring_rgb(), dtype=_np.uint8)
-            return buf.reshape(h, w, 3)
+            if self._pg is None:
+                self._pg = PygameRenderer()
+            return self._pg.draw_rgb_array(self)
         else:
             return None
 
@@ -241,6 +230,32 @@ class UnicycleNavEnv(gym.Env if hasattr(gym, "Env") else object):
         self, x_min: float, y_min: float, x_max: float, y_max: float
     ) -> None:
         self.grid.set([x_min, y_min, x_max, y_max], True)
+
+    # ------- Collision helpers --------
+    def _build_cspace_grid(self) -> BinaryOccupancyGrid:
+        """
+        Build a configuration-space occupancy grid by dilating obstacles with
+        a circular structuring element of radius equal to the robot radius.
+        """
+        try:
+            occ = self.grid.grid.astype(bool)
+            res = float(getattr(self.grid, "_cellsize", self.cfg.res))
+            r_cells = int(np.ceil(self.cfg.robot_radius / max(1e-6, res)))
+            if r_cells <= 0:
+                dilated = occ.copy()
+            else:
+                k = 2 * r_cells + 1
+                yy, xx = np.ogrid[-r_cells : r_cells + 1, -r_cells : r_cells + 1]
+                selem = (xx * xx + yy * yy) <= (r_cells * r_cells)
+                dilated = ndi.binary_dilation(occ, structure=selem)
+            return BinaryOccupancyGrid(dilated, cellsize=res, origin=(0, 0))
+        except Exception:
+            # Fallback to original grid if anything goes wrong
+            return self.grid
+
+    def _check_dynamic_collisions(self, x: float, y: float) -> bool:
+        """Placeholder for dynamic obstacle collisions (circle-circle)."""
+        return False
 
     # ------- Path helpers --------
     def _nearest_path_index(self, x: float, y: float) -> int:
