@@ -15,7 +15,7 @@ class DWAConfig:
     w_max: float = 2.0  # Max angular velocity (rad/s) / 最大角速度 - 正值表示左转
     a_max: float = 1.0  # Max linear acceleration (m/s²) / 最大线加速度 - 防止急停急启
     alpha_max: float = (
-        3.0  # Max angular acceleration (rad/s²) / 最大角加速度 - 防止急转
+        2.5  # Max angular acceleration (rad/s²) / 最大角加速度 - 防止急转
     )
 
     # Sampling / prediction / 采样与预测参数
@@ -32,10 +32,10 @@ class DWAConfig:
     weight_heading: float = (
         1.0  # Goal direction priority / 目标方向权重 - 增加更直接朝目标
     )
-    weight_clearance: float = 1.2  # Obstacle avoidance priority / 避障权重 - 增加更保守
-    weight_velocity: float = 0.2  # Speed preference / 速度偏好权重 - 增加更激进
+    weight_clearance: float = 10  # Obstacle avoidance priority / 避障权重 - 增加更保守
+    weight_velocity: float = 1  # Speed preference / 速度偏好权重 - 增加更激进
     weight_goal_progress: float = (
-        1.0  # Forward progress weight / 前进权重 - 防止原地转圈
+        5.0  # Forward progress weight / 前进权重 - 防止原地转圈
     )
 
     # Safety / geometry / 安全与几何参数
@@ -43,10 +43,10 @@ class DWAConfig:
     clearance_min: float = 0.05  # Min safety clearance (m) / 最小安全距离 - 增加更保守
 
     # Goal / guidance / 目标引导参数
-    lookahead: float = 1  # Goal lookahead distance (m) / 目标前瞻距离
+    lookahead: float = 1.3  # Goal lookahead distance (m) / 目标前瞻距离
     stall_penalty: float = 0.2  # Penalty for low speed / 低速惩罚 - 防止卡住
     lateral_bias_gain: float = 1.0  # Side gap preference / 侧向间隙偏好 - 选择更宽通道
-    forward_block_thresh: float = 2  # Forward blocking threshold (m) / 前方阻塞阈值
+    forward_block_thresh: float = 3  # Forward blocking threshold (m) / 前方阻塞阈值
     min_drive_when_free: float = 0.3  # Min speed in open space (m/s) / 开放空间最小速度
 
 
@@ -101,15 +101,18 @@ class DynamicWindowApproach:
         self, traj: np.ndarray, lidar, sensing_grid, robot_radius: float
     ) -> Tuple[bool, float]:
         """
-        Efficient LiDAR-based collision checking for DWA.
+        LiDAR-based collision checking for DWA with improved trajectory sampling.
 
-        Only checks LiDAR at start and end of trajectory for speed,
-        while maintaining the DWA principle of using real-time sensor data.
+        Checks collision at multiple points along the trajectory for better accuracy
+        while maintaining efficiency for real-time operation.
         """
         min_clearance = float("inf")
 
-        # Check only start and end points for efficiency
-        check_points = [traj[0], traj[-1]]
+        # Sample points along trajectory for better collision detection
+        # Check start, middle, and end points as a compromise between accuracy and speed
+        num_points = min(3, len(traj))
+        indices = np.linspace(0, len(traj) - 1, num_points, dtype=int)
+        check_points = traj[indices]
 
         for px, py, pth in check_points:
             try:
@@ -118,7 +121,7 @@ class DynamicWindowApproach:
                 min_clearance = min(min_clearance, min_range)
 
                 # Check if any obstacle is within robot radius + safety margin
-                if min_range < robot_radius + 0.05:  # 5cm safety margin
+                if min_range < robot_radius + self.cfg.clearance_min:
                     return False, 0.0
 
             except Exception:
@@ -130,9 +133,8 @@ class DynamicWindowApproach:
         self,
         traj: np.ndarray,
         goal_dir: np.ndarray,
-        lidar,
-        grid,
         v: float,
+        clearance: float,
     ) -> float:
         cfg = self.cfg
         x_end, y_end, th_end = traj[-1]
@@ -144,8 +146,11 @@ class DynamicWindowApproach:
             dth = (theta_goal - th_end + np.pi) % (2 * np.pi) - np.pi
             heading_score = (1.0 + np.cos(dth)) * 0.5
 
-        # Simplified clearance score - avoid expensive lidar casting
-        clearance_score = 1.0  # Assume good clearance if collision-free
+        # Clearance score based on actual obstacle distance
+        # Use smaller normalization factor for tight spaces
+        clearance_score = np.clip(
+            clearance / 2.0, 0.0, 1.0
+        )  # Normalize to max 2m clearance for tight corridors
 
         # Velocity score (prefer faster within limits)
         velocity_score = np.clip(
@@ -161,14 +166,14 @@ class DynamicWindowApproach:
         progress_score = np.clip(0.5 + 0.5 * np.tanh(progress), 0.0, 1.0)
 
         score = (
-            cfg.weight_heading * heading_score
-            + cfg.weight_clearance * clearance_score
-            + cfg.weight_velocity * velocity_score
-            + cfg.weight_goal_progress * progress_score
+            self.cfg.weight_heading * heading_score
+            + self.cfg.weight_clearance * clearance_score
+            + self.cfg.weight_velocity * velocity_score
+            + self.cfg.weight_goal_progress * progress_score
         )
         # Penalize very low forward speed to avoid stopping in front of obstacles
         if v < 0.1:
-            score -= cfg.stall_penalty
+            score -= self.cfg.stall_penalty
         return float(score)
 
     def action(
@@ -256,13 +261,13 @@ class DynamicWindowApproach:
                 traj = self._simulate_trajectory(
                     start[0], start[1], start[2], float(v), float(w)
                 )
-                free, _ = self._collision_free_lidar(
+                free, clearance = self._collision_free_lidar(
                     traj, lidar, grid, self.cfg.robot_radius
                 )
                 if not free:
                     continue
                 any_free = True
-                score = self._score_trajectory(traj, goal_dir, lidar, grid, float(v))
+                score = self._score_trajectory(traj, goal_dir, float(v), clearance)
                 if score > best_score:
                     best_score = score
                     best_cmd = (float(v), float(w))
