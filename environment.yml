@@ -1,0 +1,14 @@
+name: me5418-nav
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - matplotlib
+  - pip
+  - pip:
+      - gymnasium
+      - stable-baselines3
+      - roboticstoolbox-python
+      - scipy
+      - pygame
