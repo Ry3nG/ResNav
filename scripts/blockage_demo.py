@@ -112,7 +112,7 @@ def run_demo(
             if controller == "ppapf":
                 grid_arg = env.grids  # PPAPF needs full grids object
             else:
-                grid_arg = env.grids.cspace  # DWA uses C-space grid directly
+                grid_arg = env.grids.sensing  # DWA uses sensing grid for LiDAR casting
                 
             cmd = ctrl.action(
                 pose,

@@ -19,7 +19,7 @@ class BlockageScenarioConfig:
     map_height_m: float = 10.0
     corridor_width_m: float = 2.5
     wall_thickness_m: float = 0.3
-    pallet_width_m: float = 0.5
+    pallet_width_m: float = 1.2
     pallet_length_m: float = 0.6
     start_x_m: float = 1.0
     goal_margin_x_m: float = 1.0

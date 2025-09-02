@@ -8,38 +8,46 @@ from .base import ControlCommand
 
 @dataclass
 class DWAConfig:
-    # Robot kinematic limits
-    v_min: float = 0.0
-    v_max: float = 1.5
-    w_min: float = -2.0
-    w_max: float = 2.0
-    a_max: float = 1.0  # linear acc limit (m/s^2)
-    alpha_max: float = 3.0  # angular acc limit (rad/s^2)
+    # Robot kinematic limits / 机器人运动学限制
+    v_min: float = 0.0  # Min linear velocity (m/s) / 最小线速度 - 通常设为0
+    v_max: float = 1.5  # Max linear velocity (m/s) / 最大线速度 - 根据机器人性能调整
+    w_min: float = -2.0  # Min angular velocity (rad/s) / 最小角速度 - 负值表示右转
+    w_max: float = 2.0  # Max angular velocity (rad/s) / 最大角速度 - 正值表示左转
+    a_max: float = 1.0  # Max linear acceleration (m/s²) / 最大线加速度 - 防止急停急启
+    alpha_max: float = (
+        3.0  # Max angular acceleration (rad/s²) / 最大角加速度 - 防止急转
+    )
 
-    # Sampling / prediction - aggressive optimization for speed
-    num_v_samples: int = 3
-    num_w_samples: int = 5
-    dt: float = 0.3  # Large timestep for faster prediction
-    horizon: float = 0.6  # Short horizon for speed
+    # Sampling / prediction / 采样与预测参数
+    num_v_samples: int = (
+        3  # Linear velocity samples / 线速度采样数 - 增加提高精度但降低速度
+    )
+    num_w_samples: int = (
+        5  # Angular velocity samples / 角速度采样数 - 增加提高转向灵活性
+    )
+    dt: float = 0.3  # Prediction timestep (s) / 预测时间步长 - 越小越精确但计算量大
+    horizon: float = 0.6  # Prediction horizon (s) / 预测时间跨度 - 越长看得越远但计算慢
 
-    # Scoring weights
-    weight_heading: float = 1.0
-    weight_clearance: float = 1.2
-    weight_velocity: float = 0.2
-    weight_goal_progress: float = 1.0
+    # Scoring weights / 评分权重 (调整行为优先级)
+    weight_heading: float = (
+        1.0  # Goal direction priority / 目标方向权重 - 增加更直接朝目标
+    )
+    weight_clearance: float = 1.2  # Obstacle avoidance priority / 避障权重 - 增加更保守
+    weight_velocity: float = 0.2  # Speed preference / 速度偏好权重 - 增加更激进
+    weight_goal_progress: float = (
+        1.0  # Forward progress weight / 前进权重 - 防止原地转圈
+    )
 
-    # Safety / geometry
-    robot_radius: float = 0.25
-    clearance_min: float = 0.3
+    # Safety / geometry / 安全与几何参数
+    robot_radius: float = 0.25  # Robot radius (m) / 机器人半径 - 必须匹配实际尺寸
+    clearance_min: float = 0.05  # Min safety clearance (m) / 最小安全距离 - 增加更保守
 
-    # Goal / guidance
-    lookahead: float = 1.0
-    # Penalty to discourage stalling when safe alternatives exist
-    stall_penalty: float = 0.2
-    # Lateral gap bias to break deadlocks when front is blocked
-    lateral_bias_gain: float = 1.0
-    forward_block_thresh: float = 1.2  # meters
-    min_drive_when_free: float = 0.3  # m/s
+    # Goal / guidance / 目标引导参数
+    lookahead: float = 1  # Goal lookahead distance (m) / 目标前瞻距离
+    stall_penalty: float = 0.2  # Penalty for low speed / 低速惩罚 - 防止卡住
+    lateral_bias_gain: float = 1.0  # Side gap preference / 侧向间隙偏好 - 选择更宽通道
+    forward_block_thresh: float = 2  # Forward blocking threshold (m) / 前方阻塞阈值
+    min_drive_when_free: float = 0.3  # Min speed in open space (m/s) / 开放空间最小速度
 
 
 class DynamicWindowApproach:
@@ -89,21 +97,34 @@ class DynamicWindowApproach:
             traj[i] = (px, py, pth)
         return traj
 
-    def _collision_free(self, traj: np.ndarray, grid) -> Tuple[bool, float]:
+    def _collision_free_lidar(
+        self, traj: np.ndarray, lidar, sensing_grid, robot_radius: float
+    ) -> Tuple[bool, float]:
         """
-        Check if a trajectory is collision-free on the provided grid.
+        Efficient LiDAR-based collision checking for DWA.
 
-        Notes
-        -----
-        - The grid MUST be a configuration-space (C-space) occupancy grid,
-          where obstacles have been inflated by the robot radius and margin.
-        - Passing a raw sensing grid here will underestimate collisions.
+        Only checks LiDAR at start and end of trajectory for speed,
+        while maintaining the DWA principle of using real-time sensor data.
         """
-        # Returns (is_free, min_clearance_est)
-        for px, py, _ in traj:
-            if grid.isoccupied((float(px), float(py))):
+        min_clearance = float("inf")
+
+        # Check only start and end points for efficiency
+        check_points = [traj[0], traj[-1]]
+
+        for px, py, pth in check_points:
+            try:
+                ranges, _ = lidar.cast((float(px), float(py), float(pth)), sensing_grid)
+                min_range = float(np.min(ranges))
+                min_clearance = min(min_clearance, min_range)
+
+                # Check if any obstacle is within robot radius + safety margin
+                if min_range < robot_radius + 0.05:  # 5cm safety margin
+                    return False, 0.0
+
+            except Exception:
                 return False, 0.0
-        return True, 1.0  # Simplified clearance estimate
+
+        return True, min_clearance
 
     def _score_trajectory(
         self,
@@ -235,7 +256,9 @@ class DynamicWindowApproach:
                 traj = self._simulate_trajectory(
                     start[0], start[1], start[2], float(v), float(w)
                 )
-                free, _ = self._collision_free(traj, grid)
+                free, _ = self._collision_free_lidar(
+                    traj, lidar, grid, self.cfg.robot_radius
+                )
                 if not free:
                     continue
                 any_free = True
