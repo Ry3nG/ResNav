@@ -151,6 +151,24 @@ class PygameRenderer:
                 self._screen.blit(surf, (8, y0))
                 y0 += surf.get_height() + 2
 
+            # Optional DWA debug overlays
+            debug_dwa = status.get("debug_dwa") if isinstance(status, dict) else None
+            if debug_dwa is not None:
+                # Draw best trajectory as a polyline if provided
+                best_traj = debug_dwa.get("best_traj")
+                if isinstance(best_traj, np.ndarray) and best_traj.shape[1] >= 2:
+                    pts = [self._w2s((float(p[0]), float(p[1]))) for p in best_traj]
+                    try:
+                        self._pg.draw.lines(self._screen, (0, 200, 200), False, pts, 2)
+                    except Exception:
+                        pass
+                # Draw sampled endpoints
+                samples = debug_dwa.get("samples")
+                if isinstance(samples, np.ndarray) and samples.shape[1] >= 2:
+                    for p in samples:
+                        sx, sy = self._w2s((float(p[0]), float(p[1])))
+                        self._pg.draw.circle(self._screen, (30, 120, 200), (sx, sy), 2)
+
         # Big collision banner if collided
         if collided and self._font is not None:
             banner = self._font.render("COLLISION", True, (200, 30, 30))
@@ -199,6 +217,8 @@ class PygameRenderer:
         return pg
 
     def _extract_grid(self, env):
+        # Renderer intentionally displays the sensing grid (raw occupancy),
+        # not the inflated C-space used for collisions.
         grid = getattr(env, "grid", None)
         res = getattr(env.cfg, "res", 0.1)
         if grid is None:

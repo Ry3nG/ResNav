@@ -16,6 +16,7 @@ sys.path.insert(0, str(project_root))
 
 from me5418_nav.envs import UnicycleNavEnv, EnvConfig
 from me5418_nav.controllers.pure_pursuit_apf import PurePursuitAPF, PPAPFConfig
+from me5418_nav.controllers.dwa import DynamicWindowApproach, DWAConfig
 from me5418_nav.constants import GRID_RESOLUTION_M, DT_S
 from roboticstoolbox.mobile.OccGrid import BinaryOccupancyGrid
 
@@ -60,11 +61,11 @@ def create_blockage_scenario():
     bottom_wall_y = corridor_y_center - corridor_width / 2
     fill_rectangle(0, bottom_wall_y - wall_thickness, map_width_m, bottom_wall_y)
 
-    # Blocking pallet - small obstacle to create clear gap
+    # Blocking pallet
     pallet_x = map_width_m / 2  # 10.0m (center)
-    pallet_width = 1  # Small: 0.8m cross-corridor width
+    pallet_width = 1.35  # Small: 1.0m cross-corridor width
     pallet_length = 0.6  # Short along corridor
-    pallet_y = corridor_y_center  # Offset to create 1.7m gap on bottom
+    pallet_y = corridor_y_center
 
     fill_rectangle(
         pallet_x - pallet_length / 2,
@@ -115,7 +116,12 @@ def create_blockage_scenario():
     return grid, waypoints, start_pose, goal_pos, scenario_info
 
 
-def run_demo(episodes: int = 1, max_steps: int = 1000, render: bool = True):
+def run_demo(
+    episodes: int = 1,
+    max_steps: int = 1000,
+    render: bool = True,
+    controller: str = "dwa",
+):
     """Run the blockage demo"""
     print("Creating compact blockage scenario...")
     grid, waypoints, start_pose, goal_pos, scenario_info = create_blockage_scenario()
@@ -145,8 +151,22 @@ def run_demo(episodes: int = 1, max_steps: int = 1000, render: bool = True):
     print(f"  Robot: {robot_diameter:.1f}m diameter")
     print(f"  Clearance (best gap): {clearance:.1f}m")
 
-    # Create controller - regular APF (no wall following)
-    ctrl = PurePursuitAPF(PPAPFConfig())
+    # Create controller
+    if controller == "ppapf":
+        ctrl_name = "Pure Pursuit + APF (no wall following)"
+        ctrl = PurePursuitAPF(PPAPFConfig())
+    else:
+        ctrl_name = "Dynamic Window Approach"
+        dwa_cfg = DWAConfig(
+            v_min=env.robot.v_min,
+            v_max=env.robot.v_max,
+            w_min=env.robot.w_min,
+            w_max=env.robot.w_max,
+            dt=env.cfg.dt,
+            robot_radius=env.cfg.robot_radius,
+            clearance_min=env.cfg.robot_radius + 0.05,
+        )
+        ctrl = DynamicWindowApproach(dwa_cfg)
 
     print(f"\nRunning {episodes} episode(s)...")
 
@@ -163,18 +183,37 @@ def run_demo(episodes: int = 1, max_steps: int = 1000, render: bool = True):
             v_limits = (env.robot.v_min, env.robot.v_max)
             w_limits = (env.robot.w_min, env.robot.w_max)
 
-            action = ctrl.action(
-                pose, env.path_waypoints, env.lidar, env.grid, v_limits, w_limits
-            )
+            if controller == "ppapf":
+                action = ctrl.action(
+                    pose,
+                    env.path_waypoints,
+                    env.lidar,
+                    env.sensing_grid,
+                    v_limits,
+                    w_limits,
+                )
+            else:
+                rs = env.robot._last_state
+                v_curr, w_curr = float(rs.v), float(rs.omega)
+                action = ctrl.action(
+                    pose,
+                    env.path_waypoints,
+                    env.lidar,
+                    env.collision_grid,
+                    v_limits,
+                    w_limits,
+                    env.goal_xy,
+                    v_curr,
+                    w_curr,
+                )
             obs, reward, terminated, truncated, info = env.step(action)
             total_steps += 1
 
             if render:
-                # Simple APF controller doesn't have complex debug info
                 status = {
                     "step": total_steps,
                     "scenario": "APF Navigation (3.0m corridor, 0.8m pallet)",
-                    "controller": "Pure Pursuit + APF (no wall following)",
+                    "controller": ctrl_name,
                 }
                 env._debug_status = status
                 env.render()
@@ -185,8 +224,7 @@ def run_demo(episodes: int = 1, max_steps: int = 1000, render: bool = True):
                     np.min(obs[: env.cfg.lidar_beams]) if env.cfg.lidar_beams > 0 else 0
                 )
                 print(
-                    f"  Step {total_steps}: APF Controller, "
-                    f"Pos=({pose[0]:.1f}, {pose[1]:.1f}), MinRange={min_range:.2f}m"
+                    f"  Step {total_steps}: {ctrl_name}, Pos=({pose[0]:.1f}, {pose[1]:.1f}), MinRange={min_range:.2f}m"
                 )
 
             # Check termination
@@ -225,17 +263,18 @@ def main():
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--no-render", action="store_true")
+    parser.add_argument("--controller", choices=["ppapf", "dwa"], default="dwa")
 
     args = parser.parse_args()
 
-    print("APF Blockage Navigation Demo")
+    print("Blockage Navigation Demo")
     print("=" * 28)
     print("Setup:")
     print("- Compact 10x10m map for better zoom")
     # Keep banner consistent with scenario parameters defined above
     print("- Corridor width: 2.5m")
     print("- Pallet width: 1.0m (short along corridor)")
-    print("- Controller: Pure Pursuit + APF (no wall following)")
+    print(f"- Controller: {args.controller.upper()}")
     print("- Displays collision in renderer when geometric overlap occurs")
     print()
 
@@ -243,6 +282,7 @@ def main():
         episodes=args.episodes,
         max_steps=args.steps,
         render=not args.no_render,
+        controller=args.controller,
     )
 
 

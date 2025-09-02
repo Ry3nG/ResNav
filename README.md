@@ -1,6 +1,22 @@
 # ME5418 Project: Learning When to Yield and When to Pass for Unified AMR Navigation
 
 ## Overview
+### Grid usage convention
+
+We distinguish two grids throughout the codebase:
+
+- Sensing grid (raw occupancy): the world obstacle geometry. Used for LiDAR
+  simulation and rendering. It matches what sensors "see".
+- Collision grid (C-space): the sensing grid inflated by the robot radius and
+  safety margin. Used for all geometric feasibility and collision checks
+  (env reset feasibility, step() collision, and DWA trajectory checks).
+
+Controllers should:
+- Use the sensing grid when calling LiDAR.cast for realistic ranges
+- Use the collision grid when performing any trajectory collision checks
+
+This separation avoids "looks free" vs "collides in env" inconsistencies and
+matches common robotics practice.
 
 This project focuses on training a reinforcement learning policy for a single differential-drive Autonomous Mobile Robot (AMR) to navigate 2D factory-style environments with dynamic bottlenecks. The core challenge is to learn **when to yield and wait for a clear path, and when to confidently pass** using only local sensing, without online global replanning.
 
@@ -42,7 +58,8 @@ pip install -e .
 
 ### Run Baseline Evaluation
 ```bash
-python scripts/blockage_demo.py
+python scripts/blockage_demo.py --controller dwa
+python scripts/blockage_demo.py --controller ppapf
 ```
 
 

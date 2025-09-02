@@ -68,3 +68,7 @@ class UnicycleModel:
     def as_pose(self) -> tuple[float, float, float]:
         s = self._last_state
         return (s.x, s.y, s.theta)
+    
+    def get_state(self) -> UnicycleState:
+        """Get the current robot state."""
+        return self._last_state

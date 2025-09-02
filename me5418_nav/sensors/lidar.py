@@ -25,6 +25,13 @@ class Lidar:
     def cast(
         self, pose: Tuple[float, float, float], grid: Any
     ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Cast LiDAR rays on the provided occupancy grid.
+
+        Recommendation: pass the raw sensing grid (un-inflated) so that
+        ranges reflect the true obstacle geometry. Collision checks should be
+        performed against the C-space grid elsewhere.
+        """
         x, y, theta = pose
         angles = self.beam_angles(theta)
         ranges = np.full((self.n_beams,), self.max_range, dtype=float)

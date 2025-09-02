@@ -7,7 +7,7 @@ Values reflect the specifications documented in the wiki.
 
 # Environment / Map
 MAP_SIZE_M = (40.0, 30.0)  # meters (width, height)
-GRID_RESOLUTION_M = 0.1  # meters per cell (A* planning resolution)
+GRID_RESOLUTION_M = 0.05  # meters per cell (A* planning resolution)
 
 # Aisle widths (for generators or validations)
 AISLE_WIDTH_MIN_M = 1.4
@@ -26,7 +26,7 @@ GOAL_RADIUS_M = 0.3
 
 # LiDAR
 LIDAR_BEAMS = 24  # or 36
-LIDAR_FOV_DEG = 270.0
+LIDAR_FOV_DEG = 240.0
 LIDAR_RANGE_M = 4.0
 LIDAR_STEP_M = 0.02  # ray marching step
 

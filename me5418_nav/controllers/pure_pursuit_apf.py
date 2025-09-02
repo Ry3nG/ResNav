@@ -11,7 +11,7 @@ class PPAPFConfig:
     v_nominal: float = 0.5
     k_heading: float = 1.5
     repulse_dist: float = 0.7  # meters
-    repulse_gain: float = 0.8
+    repulse_gain: float = 0.5
     attract_gain: float = 1.2
     tangential_gain: float = 0.5
 
@@ -42,6 +42,16 @@ class PurePursuitAPF:
         v_limits: Tuple[float, float],
         w_limits: Tuple[float, float],
     ) -> Tuple[float, float]:
+        """
+        Compute control using Pure Pursuit + artificial potential fields.
+
+        Parameters
+        ----------
+        grid : Occupancy grid used for LiDAR casting.
+            This should be the raw sensing grid (un-inflated), because the
+            controller does not perform geometric collision checks itself and
+            relies on the environment's C-space for collision termination.
+        """
         cfg = self.cfg
         x, y, th = pose
         # Attractive direction toward lookahead
