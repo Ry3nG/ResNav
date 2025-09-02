@@ -19,101 +19,29 @@ from me5418_nav.controllers.pure_pursuit_apf import PurePursuitAPF, PPAPFConfig
 from me5418_nav.controllers.dwa import DynamicWindowApproach, DWAConfig
 from me5418_nav.constants import GRID_RESOLUTION_M, DT_S
 from roboticstoolbox.mobile.OccGrid import BinaryOccupancyGrid
+from me5418_nav.maps import (
+    create_blockage_scenario as build_blockage_map,
+    BlockageScenarioConfig,
+)
 
 
-def create_blockage_scenario():
-    """Create a smaller, more focused temporary blockage scenario"""
-    # Smaller, focused map: 10m x 10m
-    map_width_m = 10.0
-    map_height_m = 10.0
-    resolution = GRID_RESOLUTION_M  # 0.1m
-
-    grid_width = int(map_width_m / resolution)  # 200 cells
-    grid_height = int(map_height_m / resolution)  # 100 cells
-
-    # Create empty grid
-    grid_array = np.zeros((grid_height, grid_width), dtype=bool)
-
-    # Corridor setup - generous width for demonstration
-    corridor_y_center = map_height_m / 2  # 5.0m
-    corridor_width = 2.5
-    wall_thickness = 0.3
-
-    # Convert meters to grid indices
-    def meters_to_grid(x_m, y_m):
-        i = int(y_m / resolution)  # row (y)
-        j = int(x_m / resolution)  # col (x)
-        return min(max(i, 0), grid_height - 1), min(max(j, 0), grid_width - 1)
-
-    def fill_rectangle(x_min, y_min, x_max, y_max):
-        """Fill rectangle in grid with obstacles"""
-        i_min, j_min = meters_to_grid(x_min, y_min)
-        i_max, j_max = meters_to_grid(x_max, y_max)
-        i_min, i_max = min(i_min, i_max), max(i_min, i_max)
-        j_min, j_max = min(j_min, j_max), max(j_min, j_max)
-        grid_array[i_min : i_max + 1, j_min : j_max + 1] = True
-
-    # Top corridor wall
-    top_wall_y = corridor_y_center + corridor_width / 2
-    fill_rectangle(0, top_wall_y, map_width_m, top_wall_y + wall_thickness)
-
-    # Bottom corridor wall
-    bottom_wall_y = corridor_y_center - corridor_width / 2
-    fill_rectangle(0, bottom_wall_y - wall_thickness, map_width_m, bottom_wall_y)
-
-    # Blocking pallet
-    pallet_x = map_width_m / 2  # 10.0m (center)
-    pallet_width = 1.35  # Small: 1.0m cross-corridor width
-    pallet_length = 0.6  # Short along corridor
-    pallet_y = corridor_y_center
-
-    fill_rectangle(
-        pallet_x - pallet_length / 2,
-        pallet_y - pallet_width / 2,
-        pallet_x + pallet_length / 2,
-        pallet_y + pallet_width / 2,
-    )
-
-    # Create BinaryOccupancyGrid
-    grid = BinaryOccupancyGrid(grid_array, cellsize=resolution, origin=(0, 0))
-
-    # Create straight path through corridor
-    start_x, start_y = 1.0, corridor_y_center
-    goal_x, goal_y = map_width_m - 1.0, corridor_y_center
-
-    # Generate waypoints
-    num_waypoints = int((goal_x - start_x) / 0.3)
-    x_coords = np.linspace(start_x, goal_x, num_waypoints)
-    y_coords = np.full_like(x_coords, start_y)
-    waypoints = np.stack([x_coords, y_coords], axis=1)
-
-    start_pose = (start_x, start_y, 0.0)  # facing right
-    goal_pos = (goal_x, goal_y)
-
-    # Calculate actual gaps
-    gap_top = top_wall_y - (pallet_y + pallet_width / 2)  # Gap above pallet
-    gap_bottom = (pallet_y - pallet_width / 2) - bottom_wall_y  # Gap below pallet
-    print(f"Compact blockage scenario created:")
-    print(f"  Map: {map_width_m}x{map_height_m}m ({grid_width}x{grid_height} cells)")
-    print(f"  Corridor: {corridor_width:.1f}m wide")
-    print(
-        f"  Pallet: {pallet_width:.1f}m wide, offset +{pallet_y - corridor_y_center:.1f}m"
-    )
-    print(f"  Gap above pallet: {gap_top:.1f}m")
-    print(f"  Gap below pallet: {gap_bottom:.1f}m")
+def print_blockage_summary(
+    grid: BinaryOccupancyGrid, waypoints: np.ndarray, info: dict
+):
+    H, W = grid.grid.shape
+    res = float(getattr(grid, "_cellsize", GRID_RESOLUTION_M))
+    map_w_m = W * res
+    map_h_m = H * res
+    print("Compact blockage scenario created:")
+    print(f"  Map: {map_w_m:.1f}x{map_h_m:.1f}m ({W}x{H} cells)")
+    print(f"  Corridor: {info.get('corridor_width', 0.0):.1f}m wide")
+    print(f"  Pallet: {info.get('pallet_width', 0.0):.1f}m wide")
+    print(f"  Gap above pallet: {info.get('gap_top', 0.0):.1f}m")
+    print(f"  Gap below pallet: {info.get('gap_bottom', 0.0):.1f}m")
     print(f"  Path: {len(waypoints)} waypoints")
-    print(
-        f"  Grid occupancy: {np.sum(grid_array)}/{grid_array.size} ({np.sum(grid_array)/grid_array.size*100:.1f}%)"
-    )
-
-    scenario_info = {
-        "gap_top": gap_top,
-        "gap_bottom": gap_bottom,
-        "corridor_width": corridor_width,
-        "pallet_width": pallet_width,
-    }
-
-    return grid, waypoints, start_pose, goal_pos, scenario_info
+    occ = int(np.sum(grid.grid.astype(bool)))
+    total = int(grid.grid.size)
+    print(f"  Grid occupancy: {occ}/{total} ({occ/total*100:.1f}%)")
 
 
 def run_demo(
@@ -124,7 +52,11 @@ def run_demo(
 ):
     """Run the blockage demo"""
     print("Creating compact blockage scenario...")
-    grid, waypoints, start_pose, goal_pos, scenario_info = create_blockage_scenario()
+    # Use map generator for separation of concerns
+    grid, waypoints, start_pose, goal_pos, scenario_info = build_blockage_map(
+        BlockageScenarioConfig()
+    )
+    print_blockage_summary(grid, waypoints, scenario_info)
 
     # Create environment with smaller map
     cfg = EnvConfig(
@@ -153,20 +85,11 @@ def run_demo(
 
     # Create controller
     if controller == "ppapf":
-        ctrl_name = "Pure Pursuit + APF (no wall following)"
+        ctrl_name = "Pure Pursuit + APF"
         ctrl = PurePursuitAPF(PPAPFConfig())
     else:
         ctrl_name = "Dynamic Window Approach"
-        dwa_cfg = DWAConfig(
-            v_min=env.robot.v_min,
-            v_max=env.robot.v_max,
-            w_min=env.robot.w_min,
-            w_max=env.robot.w_max,
-            dt=env.cfg.dt,
-            robot_radius=env.cfg.robot_radius,
-            clearance_min=env.cfg.robot_radius + 0.05,
-        )
-        ctrl = DynamicWindowApproach(dwa_cfg)
+        ctrl = DynamicWindowApproach(DWAConfig())
 
     print(f"\nRunning {episodes} episode(s)...")
 
@@ -183,30 +106,26 @@ def run_demo(
             v_limits = (env.robot.v_min, env.robot.v_max)
             w_limits = (env.robot.w_min, env.robot.w_max)
 
+            rs = env.robot.get_state()
+            v_curr, w_curr = float(rs.v), float(rs.omega)
+            # Controllers expect different grid formats
             if controller == "ppapf":
-                action = ctrl.action(
-                    pose,
-                    env.path_waypoints,
-                    env.lidar,
-                    env.sensing_grid,
-                    v_limits,
-                    w_limits,
-                )
+                grid_arg = env.grids  # PPAPF needs full grids object
             else:
-                rs = env.robot._last_state
-                v_curr, w_curr = float(rs.v), float(rs.omega)
-                action = ctrl.action(
-                    pose,
-                    env.path_waypoints,
-                    env.lidar,
-                    env.collision_grid,
-                    v_limits,
-                    w_limits,
-                    env.goal_xy,
-                    v_curr,
-                    w_curr,
-                )
-            obs, reward, terminated, truncated, info = env.step(action)
+                grid_arg = env.grids.cspace  # DWA uses C-space grid directly
+                
+            cmd = ctrl.action(
+                pose,
+                env.path_waypoints,
+                env.lidar,
+                grid_arg,
+                v_limits,
+                w_limits,
+                env.goal_xy,
+                v_curr,
+                w_curr,
+            )
+            obs, reward, terminated, truncated, info = env.step((cmd.v, cmd.w))
             total_steps += 1
 
             if render:

@@ -22,6 +22,7 @@ from ..constants import (
     GOAL_RADIUS_M,
 )
 from ..viz.pygame_render import PygameRenderer
+from ..types import Grids
 
 
 @dataclass
@@ -72,8 +73,9 @@ class UnicycleNavEnv(gym.Env):
         self.grid = grid or BinaryOccupancyGrid(
             np.zeros((H, W), dtype=bool), cellsize=self.cfg.res, origin=(0, 0)
         )
-        # Precompute configuration-space (C-space) occupancy by inflating obstacles
-        # with the robot radius. Collision is then center-in-occupied on this grid.
+        # Precompute EDT and configuration-space (C-space) occupancy by inflating
+        # obstacles with the robot radius. Collision is center-in-occupied on C-space.
+        self._edt_m: np.ndarray | None = None  # distance to nearest obstacle (meters)
         self._grid_cspace: BinaryOccupancyGrid = self._build_cspace_grid()
         self._last_collision: bool = False
         # Path/goal
@@ -309,6 +311,16 @@ class UnicycleNavEnv(gym.Env):
         """Raw occupancy grid used for LiDAR sensing and rendering."""
         return self.grid
 
+    @property
+    def grids(self) -> Grids:
+        """Bundle of sensing and C-space grids to enforce two-grid usage."""
+        return Grids(
+            sensing=self.grid,
+            cspace=self._grid_cspace,
+            edt=self._edt_m,
+            res=float(getattr(self.grid, "_cellsize", self.cfg.res)),
+        )
+
     def _set_rect_obstacle(
         self, x_min: float, y_min: float, x_max: float, y_max: float
     ) -> None:
@@ -332,6 +344,7 @@ class UnicycleNavEnv(gym.Env):
             free = ~occ
             dist_px = ndi.distance_transform_edt(free)
             dist_m = dist_px * res
+            self._edt_m = dist_m.astype(float)
             # Threshold at robot radius (optionally add safety margin if needed)
             r_eff = float(self.cfg.robot_radius)
             cspace_occ = dist_m <= r_eff
@@ -339,7 +352,12 @@ class UnicycleNavEnv(gym.Env):
         except (AttributeError, ValueError, TypeError) as e:
             # Fallback to original grid if dilation fails
             print(f"Warning: C-space grid dilation failed: {e}. Using original grid.")
+            self._edt_m = None
             return self.grid
+
+    def rebuild_cspace(self) -> None:
+        """Recompute EDT and C-space after updating the sensing grid."""
+        self._grid_cspace = self._build_cspace_grid()
 
     def _check_dynamic_collisions(self, x: float, y: float) -> bool:
         """Placeholder for dynamic obstacle collisions (circle-circle)."""
@@ -392,3 +410,25 @@ class UnicycleNavEnv(gym.Env):
             dx, dy = wp[j, 0] - x, wp[j, 1] - y
             preview_pts.extend([dx, dy])
         return ct_err, hdg_err, np.array(preview_pts, dtype=float)
+
+    # ------- EDT helpers --------
+    @property
+    def edt_m(self) -> Optional[np.ndarray]:
+        """Euclidean distance (meters) to nearest obstacle for each cell, if available."""
+        return self._edt_m
+
+    def clearance_at(self, x: float, y: float) -> Optional[float]:
+        """Clearance (meters) = distance to nearest obstacle - robot radius, at (x,y)."""
+        if self._edt_m is None:
+            return None
+        try:
+            res = float(getattr(self.grid, "_cellsize", self.cfg.res))
+            gy = int(y / max(1e-9, res))
+            gx = int(x / max(1e-9, res))
+            H, W = self._edt_m.shape[:2]
+            if gy < 0 or gx < 0 or gy >= H or gx >= W:
+                return None
+            d = float(self._edt_m[gy, gx])
+            return d - float(self.cfg.robot_radius)
+        except Exception:
+            return None

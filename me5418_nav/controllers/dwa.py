@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple, Optional
 import numpy as np
+from .base import ControlCommand
 
 
 @dataclass
@@ -15,11 +16,11 @@ class DWAConfig:
     a_max: float = 1.0  # linear acc limit (m/s^2)
     alpha_max: float = 3.0  # angular acc limit (rad/s^2)
 
-    # Sampling / prediction
-    num_v_samples: int = 7
-    num_w_samples: int = 15
-    dt: float = 0.1
-    horizon: float = 1.2  # seconds
+    # Sampling / prediction - aggressive optimization for speed
+    num_v_samples: int = 3
+    num_w_samples: int = 5
+    dt: float = 0.3  # Large timestep for faster prediction
+    horizon: float = 0.6  # Short horizon for speed
 
     # Scoring weights
     weight_heading: float = 1.0
@@ -99,24 +100,10 @@ class DynamicWindowApproach:
         - Passing a raw sensing grid here will underestimate collisions.
         """
         # Returns (is_free, min_clearance_est)
-        min_clear = np.inf
         for px, py, _ in traj:
-            try:
-                if grid.isoccupied((float(px), float(py))):
-                    return False, 0.0
-            except Exception:
-                # Fallback: attempt index query if provided
-                try:
-                    gy, gx = grid.world_to_grid(float(px), float(py))
-                    if grid.is_occupied_index(gy, gx):
-                        return False, 0.0
-                except Exception:
-                    pass
-            # Conservative clearance estimate from grid resolution if available
-            min_clear = min(min_clear, 1e6)
-        if not np.isfinite(min_clear):
-            min_clear = 1e6
-        return True, min_clear
+            if grid.isoccupied((float(px), float(py))):
+                return False, 0.0
+        return True, 1.0  # Simplified clearance estimate
 
     def _score_trajectory(
         self,
@@ -136,13 +123,8 @@ class DynamicWindowApproach:
             dth = (theta_goal - th_end + np.pi) % (2 * np.pi) - np.pi
             heading_score = (1.0 + np.cos(dth)) * 0.5
 
-        # Clearance at end pose using lidar
-        try:
-            ranges, _ = lidar.cast((x_end, y_end, th_end), grid)
-            min_range = float(np.min(ranges))
-        except Exception:
-            min_range = 1.0
-        clearance_score = np.clip(min_range / (cfg.clearance_min * 2.0), 0.0, 1.0)
+        # Simplified clearance score - avoid expensive lidar casting
+        clearance_score = 1.0  # Assume good clearance if collision-free
 
         # Velocity score (prefer faster within limits)
         velocity_score = np.clip(
@@ -179,7 +161,7 @@ class DynamicWindowApproach:
         goal_xy: Optional[Tuple[float, float]],
         v_curr: float,
         w_curr: float,
-    ) -> Tuple[float, float]:
+    ) -> ControlCommand:
         """
         Compute DWA control.
 
@@ -278,7 +260,7 @@ class DynamicWindowApproach:
             except Exception:
                 turn_left = True
             w_safe = (w_limits[1] if turn_left else w_limits[0]) * 0.5
-            return 0.0, float(w_safe)
+            return ControlCommand(v=0.0, w=float(w_safe))
 
         # Prefer moving solution when available
         if best_free_with_drive[0] > -np.inf:
@@ -287,4 +269,4 @@ class DynamicWindowApproach:
             v_sel, w_sel = best_cmd
         v_cmd = np.clip(v_sel, v_limits[0], v_limits[1])
         w_cmd = np.clip(w_sel, w_limits[0], w_limits[1])
-        return float(v_cmd), float(w_cmd)
+        return ControlCommand(v=float(v_cmd), w=float(w_cmd))
