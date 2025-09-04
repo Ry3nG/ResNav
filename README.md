@@ -8,8 +8,10 @@ We distinguish two grids throughout the codebase:
 - Sensing grid (raw occupancy): the world obstacle geometry. Used for LiDAR
   simulation and rendering. It matches what sensors "see".
 - Collision grid (C-space): the sensing grid inflated by the robot radius and
-  safety margin. Used for all geometric feasibility and collision checks
-  (env reset feasibility, step() collision, and DWA trajectory checks).
+  safety margin. Used by the environment for feasibility and collision checks
+  (reset feasibility and step() collision). Controllers may optionally consult
+  C-space for trajectory feasibility; the provided DWA is sensor-driven and
+  uses only the sensing grid for LiDAR and approximate clearance.
 
 Controllers should:
 - Use the sensing grid when calling LiDAR.cast for realistic ranges
@@ -32,7 +34,7 @@ This project proposes a unified continuous control policy that integrates path t
 ## Key Constraints & Objectives
 
 - **Fixed Global Path**: A* planned path computed once at task start - no online replanning
-- **Local Sensing**: Sparse 2D LiDAR only (24-36 beams, 270° FOV, 4m range)
+- **Local Sensing**: Sparse 2D LiDAR only (24–36 beams, 240° FOV, 4 m range)
 - **Non-cooperative Environment**: Static obstacles + dynamic movers that don't yield
 - **Continuous Control**: Direct velocity commands (v, ω) output
 
@@ -71,34 +73,61 @@ python scripts/blockage_demo.py --controller ppapf
 
 ### Training & Evaluation (PPO on Blockage)
 
-Train a PPO agent on randomized blockage maps (headless):
+Train a PPO agent on randomized blockage maps. The training script now includes best‑practice defaults: multi‑env parallelism, episodic monitoring, evaluation, checkpointing, optional normalization, and W&B integration.
+
+Recommended command (8 envs, normalization, eval + checkpoints):
 
 ```bash
-# CPU training (recommended for MLP policy)
-export CUDA_VISIBLE_DEVICES="" && python scripts/train_blockage_ppo.py --timesteps 200000 --seed 0 --num-envs 1
-
-# Multi-environment training for faster data collection
-python scripts/train_blockage_ppo.py --timesteps 5000000 --num-envs 8 --seed 42
+python scripts/train_blockage_ppo.py \
+  --timesteps 5000000 \
+  --num-envs 8 \
+  --norm-obs --norm-reward \
+  --eval-freq 20000 --eval-episodes 5 \
+  --checkpoint-freq 50000 \
+  --run-name exp_blockage_ppo_seed42 \
+  --seed 42
 ```
 
-Training logs are automatically sent to Weights & Biases (if configured) under the project `me5418-blockage-ppo`.
+Headless/offline W&B example:
+
+```bash
+python scripts/train_blockage_ppo.py \
+  --timesteps 1000000 --num-envs 4 \
+  --norm-obs --norm-reward \
+  --wandb-mode offline --no-wandb
+```
+
+Notes:
+- Normalization is now opt‑in. Use `--norm-obs --norm-reward` for stability. If used, keep and pass `vecnormalize.pkl` to evaluation.
+- The script saves best model, periodic checkpoints, TB logs, and `config.yaml` under `logs/ppo_blockage/<run_name>/`.
+- Success/collision/timeout rates are logged during training (TensorBoard/W&B).
 
 Evaluate a trained model (headless metrics):
 
 ```bash
 python scripts/eval_blockage_ppo.py \
-  --model logs/ppo_blockage/seed_0/ppo_blockage.zip \
-  --vecnorm logs/ppo_blockage/seed_0/vecnormalize.pkl \
+  --model logs/ppo_blockage/<run_name>/ppo_blockage.zip \
+  --vecnorm logs/ppo_blockage/<run_name>/vecnormalize.pkl \
   --episodes 50
 ```
 
-Evaluate visually (on-screen rendering):
+Evaluate visually (on‑screen rendering):
 
 ```bash
 python scripts/eval_blockage_ppo.py \
-  --model logs/ppo_blockage/seed_0/ppo_blockage.zip \
-  --vecnorm logs/ppo_blockage/seed_0/vecnormalize.pkl \
+  --model logs/ppo_blockage/<run_name>/ppo_blockage.zip \
+  --vecnorm logs/ppo_blockage/<run_name>/vecnormalize.pkl \
   --episodes 5 --render
+```
+
+Resume training from a checkpoint:
+
+```bash
+python scripts/train_blockage_ppo.py \
+  --resume-from logs/ppo_blockage/<run_name>/checkpoints/ppo_blockage_500000_steps.zip \
+  --resume-vecnorm logs/ppo_blockage/<run_name>/vecnormalize.pkl \
+  --run-name <run_name> \
+  --timesteps 5000000 --num-envs 8
 ```
 
 Notes:
@@ -119,7 +148,7 @@ Notes:
 ## Baselines
 
 - Pure Pursuit + Artificial Potential Fields (PP+APF)
-- Dynamic Window Approach (planned)
+- Dynamic Window Approach (DWA)
 
 ## Evaluation Metrics
 
@@ -128,3 +157,25 @@ Notes:
 - Deadlock Rate
 - Task Completion Time
 - Path Following Accuracy
+
+## Training Script Options (Summary)
+- Run & device: `--timesteps`, `--seed`, `--device {auto,cpu,cuda}`, `--torch-deterministic`, `--run-name`
+- Envs & wrappers: `--num-envs`, `--norm-obs`, `--norm-reward`, `--clip-obs`
+- PPO core: `--n-steps` (total rollout across envs), `--batch-size`, `--gamma`, `--gae-lambda`, `--n-epochs`, `--learning-rate`, `--clip-range`, `--ent-coef`, `--vf-coef`, `--max-grad-norm`, `--target-kl`, `--use-sde`, `--sde-sample-freq`, `--policy-arch`
+- Schedules: `--lr-schedule {constant,linear}`, `--clip-schedule {constant,linear}`
+- Eval/checkpoints: `--eval-freq`, `--eval-episodes`, `--checkpoint-freq`, `--early-stop-patience`
+- W&B: `--no-wandb`, `--wandb-project`, `--wandb-group`, `--wandb-mode` (e.g., `offline`)
+- Resume: `--resume-from`, `--resume-vecnorm`
+
+See `python scripts/train_blockage_ppo.py --help` for full details.
+
+## Logs & Artifacts
+- Base dir: `logs/ppo_blockage/<run_name>/`
+- Files/dirs:
+  - `ppo_blockage.zip`: final policy; `best_model/` contains best eval policy
+  - `vecnormalize.pkl`: VecNormalize stats when normalization is enabled
+  - `checkpoints/`: periodic checkpoints by step count
+  - `monitor/`: per‑env CSVs of episodic returns/lengths and outcome flags
+  - `eval/`: evaluation logs and summaries
+  - `tb/`: TensorBoard logs; W&B runs if enabled
+  - `config.yaml`: saved CLI config for reproducibility

@@ -2,16 +2,12 @@ from __future__ import annotations
 
 """
 Centralized constants for environment, robot, LiDAR, and map defaults.
-Values reflect the specifications documented in the wiki.
+
+Only keep constants that are used across the codebase to avoid drift.
 """
 
 # Environment / Map
-MAP_SIZE_M = (40.0, 30.0)  # meters (width, height)
-GRID_RESOLUTION_M = 0.05  # meters per cell (A* planning resolution)
-
-# Aisle widths (for generators or validations)
-AISLE_WIDTH_MIN_M = 1.4
-AISLE_WIDTH_MAX_M = 1.8
+GRID_RESOLUTION_M = 0.05  # meters per cell (grid + EDT resolution)
 
 # Robot
 ROBOT_DIAMETER_M = 0.5
@@ -32,6 +28,3 @@ LIDAR_STEP_M = 0.02  # ray marching step
 
 # Episode / Evaluation
 EPISODE_TIME_S = 120.0
-
-# Planning / Inflation
-INFLATION_MARGIN_M = 0.05  # robot radius + margin used in builder validation

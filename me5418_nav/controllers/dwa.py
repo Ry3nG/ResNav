@@ -4,15 +4,22 @@ from dataclasses import dataclass
 from typing import Tuple, Optional
 import numpy as np
 from .base import ControlCommand
+from ..constants import (
+    ROBOT_V_MIN_MPS,
+    ROBOT_V_MAX_MPS,
+    ROBOT_W_MIN_RPS,
+    ROBOT_W_MAX_RPS,
+    ROBOT_RADIUS_M,
+)
 
 
 @dataclass
 class DWAConfig:
     # Robot kinematic limits / 机器人运动学限制
-    v_min: float = 0.0  # Min linear velocity (m/s) / 最小线速度 - 通常设为0
-    v_max: float = 1.5  # Max linear velocity (m/s) / 最大线速度 - 根据机器人性能调整
-    w_min: float = -2.0  # Min angular velocity (rad/s) / 最小角速度 - 负值表示右转
-    w_max: float = 2.0  # Max angular velocity (rad/s) / 最大角速度 - 正值表示左转
+    v_min: float = ROBOT_V_MIN_MPS  # Min linear velocity (m/s)
+    v_max: float = ROBOT_V_MAX_MPS  # Max linear velocity (m/s)
+    w_min: float = ROBOT_W_MIN_RPS  # Min angular velocity (rad/s)
+    w_max: float = ROBOT_W_MAX_RPS  # Max angular velocity (rad/s)
     a_max: float = 1.0  # Max linear acceleration (m/s²) / 最大线加速度 - 防止急停急启
     alpha_max: float = (
         2.5  # Max angular acceleration (rad/s²) / 最大角加速度 - 防止急转
@@ -39,7 +46,7 @@ class DWAConfig:
     )
 
     # Safety / geometry / 安全与几何参数
-    robot_radius: float = 0.25  # Robot radius (m) / 机器人半径 - 必须匹配实际尺寸
+    robot_radius: float = ROBOT_RADIUS_M  # Robot radius (m) — keep in sync with env
     clearance_min: float = 0.05  # Min safety clearance (m) / 最小安全距离 - 增加更保守
 
     # Goal / guidance / 目标引导参数
@@ -181,7 +188,7 @@ class DynamicWindowApproach:
         pose: Tuple[float, float, float],
         waypoints: Optional[np.ndarray],
         lidar,
-        grid,
+        sensing_grid,
         v_limits: Tuple[float, float],
         w_limits: Tuple[float, float],
         goal_xy: Optional[Tuple[float, float]],
@@ -195,16 +202,18 @@ class DynamicWindowApproach:
         ----------
         pose : (x, y, theta)
         waypoints : optional path for heading/guidance
-        lidar : LiDAR sensor (should cast on sensing grid for realism)
-        grid : Occupancy grid for collision checks. MUST be the C-space grid.
+        lidar : LiDAR sensor (casts on sensing grid)
+        sensing_grid : Raw sensing occupancy grid used for LiDAR and approximate
+            clearance checks along sampled trajectories
         v_limits, w_limits : hard command limits
         goal_xy : final goal for guidance if no waypoints
         v_curr, w_curr : current commanded velocities for dynamic window
 
         Notes
         -----
-        - LiDAR casting should use the raw sensing grid to reflect real geometry.
-        - Collision checks must use the C-space grid to match environment physics.
+        - This implementation is sensor-driven and does not require access to the
+          env's C-space grid; the environment remains the source of truth for
+          collisions/termination.
         """
         cfg = self.cfg
         x, y, th = pose
@@ -220,7 +229,7 @@ class DynamicWindowApproach:
 
         # If forward is blocked, bias goal direction laterally toward freer side
         try:
-            ranges, _ = lidar.cast((x, y, th), grid)
+            ranges, _ = lidar.cast((x, y, th), sensing_grid)
             angles = lidar.beam_angles(th)
             fwd_mask = np.abs(angles - th) <= np.deg2rad(15.0)
             fwd_min = float(np.min(ranges[fwd_mask])) if np.any(fwd_mask) else np.inf
@@ -262,7 +271,7 @@ class DynamicWindowApproach:
                     start[0], start[1], start[2], float(v), float(w)
                 )
                 free, clearance = self._collision_free_lidar(
-                    traj, lidar, grid, self.cfg.robot_radius
+                    traj, lidar, sensing_grid, self.cfg.robot_radius
                 )
                 if not free:
                     continue
@@ -280,7 +289,7 @@ class DynamicWindowApproach:
         if not any_free:
             # Rotate toward freer side using lidar
             try:
-                ranges, _ = lidar.cast((x, y, th), grid)
+                ranges, _ = lidar.cast((x, y, th), sensing_grid)
                 half = len(ranges) // 2
                 left_min = float(np.min(ranges[:half])) if half > 0 else 1.0
                 right_min = float(np.min(ranges[half:])) if half > 0 else 1.0

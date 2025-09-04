@@ -19,3 +19,5 @@ dependencies:
       - pydantic
       - pyyaml
       - requests
+      - tqdm
+      - rich

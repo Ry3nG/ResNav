@@ -198,19 +198,18 @@ class UnicycleNavEnv(gym.Env):
         Raises:
             ValueError: If action format is invalid or values out of range
         """
-        # Input validation
+        # Input validation + clamping to robot limits
         if not isinstance(action, (tuple, list, np.ndarray)) or len(action) != 2:
             raise ValueError(
                 "Action must be a tuple/list/array of length 2: [v_cmd, omega_cmd]"
             )
 
         v_cmd, omega_cmd = float(action[0]), float(action[1])
-        if not (-10.0 <= v_cmd <= 10.0) or not (-10.0 <= omega_cmd <= 10.0):
-            raise ValueError(
-                f"Action values out of reasonable range: v={v_cmd}, ω={omega_cmd}"
-            )
+        # Clamp to robot limits (source of truth)
+        v_cmd = float(np.clip(v_cmd, self.robot.v_min, self.robot.v_max))
+        omega_cmd = float(np.clip(omega_cmd, self.robot.w_min, self.robot.w_max))
         self._step_count += 1
-        self.robot.step(action, dt=self.cfg.dt)
+        self.robot.step((v_cmd, omega_cmd), dt=self.cfg.dt)
         obs = self._get_obs()
         # Geometric collision: center-in-occupied on C-space grid
         x, y, _ = self.robot.as_pose()

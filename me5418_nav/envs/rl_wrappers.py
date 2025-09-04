@@ -47,6 +47,7 @@ class BlockageRLWrapper(gym.Wrapper):
         self._seed = int(seed) if seed is not None else None
         self._seed_per_episode = seed_per_episode
         self._rng = np.random.default_rng(self._seed)
+        self._scen_info: dict | None = None
 
         # Caches for reward terms
         self._prev_pose: Optional[Tuple[float, float, float]] = None
@@ -64,13 +65,14 @@ class BlockageRLWrapper(gym.Wrapper):
             )
             cfg.random_seed = int(self._rng.integers(0, 2**31 - 1))
 
-        grid, waypoints, start_pose, goal_xy, _ = create_blockage_scenario(cfg)
+        grid, waypoints, start_pose, goal_xy, scen_info = create_blockage_scenario(cfg)
         # Replace underlying env scenario
         env: UnicycleNavEnv = self.env
         env.grid = grid
         env.path_waypoints = waypoints
         env._start_pose = start_pose
         env.goal_xy = goal_xy
+        self._scen_info = dict(scen_info) if scen_info is not None else {}
         # Keep cfg map size consistent (not strictly required but tidy)
         H, W = grid.grid.shape
         env.cfg.map_size = (H, W)
@@ -115,6 +117,23 @@ class BlockageRLWrapper(gym.Wrapper):
         self._prev_pose = pose
         self._prev_ct_err, self._prev_hdg_err = ct_curr, hdg_curr
         self._prev_action = np.array(action, dtype=float)
+        # Attach scenario metadata for logging at episode end
+        try:
+            scen = self._scen_info or {}
+            info = dict(info)
+            # Provide compatibility key for SB3 EvalCallback success-rate
+            if "success" in info and "is_success" not in info:
+                info["is_success"] = bool(info.get("success", False))
+            if "num_pallets" in scen:
+                info["scenario_num_pallets"] = int(scen.get("num_pallets", 0))
+            if "min_clearance" in scen:
+                info["scenario_min_clearance"] = float(scen.get("min_clearance", 0.0))
+            if "difficulty_score" in scen:
+                info["scenario_difficulty"] = float(scen.get("difficulty_score", 0.0))
+            if "actual_seed" in scen:
+                info["scenario_seed"] = int(scen.get("actual_seed"))
+        except Exception:
+            pass
         return obs, reward, terminated, truncated, info
 
     # --------- Reward terms ----------
