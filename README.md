@@ -54,6 +54,13 @@ conda activate me5418-nav
 pip install -e .
 ```
 
+### Weights & Biases Setup (Optional)
+For experiment tracking and visualization:
+```bash
+conda install -n me5418-nav wandb
+wandb login
+```
+
 ## Quick Start
 
 ### Run Baseline Evaluation
@@ -67,8 +74,14 @@ python scripts/blockage_demo.py --controller ppapf
 Train a PPO agent on randomized blockage maps (headless):
 
 ```bash
-python scripts/train_blockage_ppo.py --timesteps 200000 --seed 0 --num-envs 1
+# CPU training (recommended for MLP policy)
+export CUDA_VISIBLE_DEVICES="" && python scripts/train_blockage_ppo.py --timesteps 200000 --seed 0 --num-envs 1
+
+# Multi-environment training for faster data collection
+python scripts/train_blockage_ppo.py --timesteps 5000000 --num-envs 8 --seed 42
 ```
+
+Training logs are automatically sent to Weights & Biases (if configured) under the project `me5418-blockage-ppo`.
 
 Evaluate a trained model (headless metrics):
 

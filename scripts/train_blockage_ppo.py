@@ -10,9 +10,11 @@ from pathlib import Path
 
 import numpy as np
 import gymnasium as gym
+import wandb
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.callbacks import BaseCallback
 
 from me5418_nav.envs.unicycle_nav_env import UnicycleNavEnv, EnvConfig
 from me5418_nav.envs.rl_wrappers import BlockageRLWrapper, RewardConfig
@@ -31,6 +33,18 @@ def make_env(seed: int, scen_cfg: BlockageScenarioConfig, rew_cfg: RewardConfig)
     return _thunk
 
 
+class WandbCallback(BaseCallback):
+    def __init__(self, verbose=0):
+        super(WandbCallback, self).__init__(verbose)
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if hasattr(self.model, 'logger') and self.model.logger.name_to_value:
+            wandb.log(self.model.logger.name_to_value, step=self.num_timesteps)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train PPO on blockage maps")
     parser.add_argument("--timesteps", type=int, default=200_000)
@@ -43,6 +57,19 @@ def main():
     parser.add_argument("--pallet-length", type=str, default="0.3,0.6")
 
     args = parser.parse_args()
+
+    # Initialize wandb
+    wandb.init(
+        project="me5418-blockage-ppo",
+        config={
+            "timesteps": args.timesteps,
+            "seed": args.seed,
+            "num_envs": args.num_envs,
+            "num_pallets": args.num_pallets,
+            "pallet_width": args.pallet_width,
+            "pallet_length": args.pallet_length,
+        }
+    )
 
     # Scenario config
     num_pallets_range = tuple(map(int, args.num_pallets.split(",")))
@@ -67,7 +94,6 @@ def main():
         policy="MlpPolicy",
         env=vec,
         verbose=1,
-        tensorboard_log=args.logdir,
         seed=args.seed,
         n_steps=2048 // max(1, args.num_envs),
         batch_size=64,
@@ -78,13 +104,19 @@ def main():
         clip_range=0.2,
     )
 
-    model.learn(total_timesteps=args.timesteps)
+    # Create wandb callback
+    wandb_callback = WandbCallback()
+    
+    model.learn(total_timesteps=args.timesteps, callback=wandb_callback)
 
     # Save
     outdir = Path(args.logdir) / f"seed_{args.seed}"
     outdir.mkdir(parents=True, exist_ok=True)
     model.save(str(outdir / "ppo_blockage"))
     vec.save(str(outdir / "vecnormalize.pkl"))
+    
+    # Finish wandb run
+    wandb.finish()
 
 
 if __name__ == "__main__":

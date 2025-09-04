@@ -1,14 +1,21 @@
 name: me5418-nav
 channels:
   - conda-forge
+  - defaults
 dependencies:
   - python=3.10
-  - numpy
+  - numpy<2
   - matplotlib
+  - scipy
+  - tensorboard
+  - wandb
   - pip
   - pip:
       - gymnasium
       - stable-baselines3
       - roboticstoolbox-python
-      - scipy
       - pygame
+      - torch
+      - pydantic
+      - pyyaml
+      - requests
