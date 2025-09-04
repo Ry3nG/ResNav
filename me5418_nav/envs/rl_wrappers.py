@@ -12,27 +12,44 @@ from ..maps import create_blockage_scenario, BlockageScenarioConfig
 
 @dataclass
 class RewardConfig:
-    # Progress reward (increased for stronger incentive)
-    alpha_progress: float = 2.5
-    # Safety penalties (reduced beta_risk to be less conservative)
-    beta_risk: float = 8.0
-    beta_lat: float = 0.5
-    beta_hdg: float = 0.1
-    beta_smooth: float = 0.05
-    # Safety margins
-    base_margin_m: float = 0.10
-    kv_margin_s: float = 0.05
+    """Simplified reward configuration for safer, more stable learning.
+
+    Design goals:
+    - 以“目标距离进展”为核心（势函数差分），倒退为负值；
+    - 只在进入安全边距内才施加强惩罚（贴障风险平方）；
+    - 保留小幅平滑惩罚，去掉逐步时间压力与生硬的前进/旋转奖励；
+    - 追加“无进展罚”，防止长期原地小动作。
+    """
+
+    # Goal-distance progress: r = alpha_goal * (d_{t-1} - d_t)
+    alpha_goal: float = 2.0
+
+    # Safety: only when r_min below effective safety distance
+    beta_risk: float = 10.0
+    risk_threshold: float = 0.0  # xgap = d_safe_eff - r_min > threshold 才罚
+
+    # Smoothness
+    beta_smooth: float = 0.02
+
+    # No-progress penalty
+    stuck_steps: int = 8
+    stuck_progress_eps: float = 1e-3
+    stuck_speed_eps: float = 0.05
+    stuck_penalty: float = 0.5
+
+    # Safety margins for effective distance
+    base_margin_m: float = 0.12
+    kv_margin_s: float = 0.07
     k_softplus: float = 10.0
-    # Terminal rewards (rebalanced)
-    goal_bonus: float = 50.0
-    collision_penalty: float = 50.0
-    timeout_penalty: float = 25.0  # Increased from 10.0 to make timeout costlier
-    # Exploration incentives (new)
-    velocity_bonus: float = 0.1
-    spin_penalty: float = 1.0
-    # Reward clipping (fixed)
-    clip_abs: float = 60.0  # Increased from 5.0 to not clip terminal rewards
-    step_reward_clip: float = 8.0  # Separate clipping for step rewards
+
+    # Terminal rewards
+    goal_bonus: float = 100.0
+    collision_penalty: float = 200.0
+    timeout_penalty: float = 80.0
+
+    # Step reward clipping
+    clip_abs: float = 200.0
+    step_reward_clip: float = 5.0
 
 
 class BlockageRLWrapper(gym.Wrapper):
@@ -63,6 +80,11 @@ class BlockageRLWrapper(gym.Wrapper):
         self._prev_action = np.zeros(2, dtype=float)
         self._prev_ct_err = 0.0
         self._prev_hdg_err = 0.0
+        
+        # Learning-time state tracking
+        self._prev_goal_distance: Optional[float] = None  # For goal distance progress
+        self._no_progress_count = 0                       # For anti-stalling detection
+        self._episode_step_count = 0                      # For logging/timeout checks
 
     # --------- Scenario management ----------
     def _regen_scenario(self) -> None:
@@ -105,6 +127,11 @@ class BlockageRLWrapper(gym.Wrapper):
         else:
             self._prev_ct_err, self._prev_hdg_err = 0.0, 0.0
         self._prev_action[:] = 0.0
+        
+        # Reset learning-time trackers
+        self._prev_goal_distance = None  # Will be initialized on first step
+        self._no_progress_count = 0
+        self._episode_step_count = 0
         return obs, info
 
     def step(self, action):
@@ -169,6 +196,7 @@ class BlockageRLWrapper(gym.Wrapper):
             return -rc.collision_penalty
         if info.get("success", False):
             return rc.goal_bonus
+        # Timeout handled as truncated at env level; 这里使用计数判断
         if env._step_count >= env.max_steps:
             return -rc.timeout_penalty
 
@@ -179,56 +207,55 @@ class BlockageRLWrapper(gym.Wrapper):
         robot_r = float(env.cfg.robot_radius)
         d_safe_eff = robot_r + rc.base_margin_m + rc.kv_margin_s * max(0.0, v_curr)
 
-        # Progress along path: project displacement onto path tangent
-        ds = 0.0
-        if prev_pose is not None:
-            px, py, _ = prev_pose
+        # === PROGRESS: goal-distance potential difference ===
+        clearance_factor = float(np.clip(r_min / max(1e-6, d_safe_eff), 0.0, 1.0))
+        r_goal = 0.0
+        if env.goal_xy is not None:
+            gx, gy = env.goal_xy
             x, y, _ = pose
-            # tangent at current pose's nearest segment
-            idx = env._nearest_path_index(x, y)
-            wp = env.path_waypoints
-            j = min(idx + 1, wp.shape[0] - 1)
-            ab = wp[j] - wp[idx]
-            ab_len = float(np.linalg.norm(ab))
-            if ab_len > 1e-9:
-                t_hat = ab / ab_len
-                disp = np.array([x - px, y - py], dtype=float)
-                ds = float(max(0.0, np.dot(disp, t_hat)))
+            curr_goal_dist = float(np.hypot(gx - x, gy - y))
+            
+            if self._prev_goal_distance is not None:
+                # Potential difference: moving away is negative
+                goal_progress = self._prev_goal_distance - curr_goal_dist
+                # 在不安全时弱化该奖励，避免“顶着障碍直冲”
+                r_goal = rc.alpha_goal * goal_progress * (0.5 + 0.5 * clearance_factor)
+            
+            # Update for next step
+            self._prev_goal_distance = curr_goal_dist
 
-        clearance_factor = min(1.0, r_min / max(1e-6, d_safe_eff))
-        # Optional floor to avoid zeroing progress entirely in narrow but valid gaps
-        clearance_factor = max(0.2, clearance_factor)
-        r_prog = rc.alpha_progress * ds * clearance_factor
-
-        # Safety barrier (smooth)
+        # === SAFETY: selective risk penalty ===
+        # Only when inside safety margin (xgap > threshold)
         xgap = d_safe_eff - r_min
-        s = self._softplus(xgap)
-        r_risk = -rc.beta_risk * (s * s)
+        if xgap > rc.risk_threshold:
+            s = self._softplus(abs(xgap))
+            r_risk = -rc.beta_risk * (s * s)
+        else:
+            r_risk = 0.0
 
-        # Path shaping (potential differences)
-        r_path = -rc.beta_lat * (abs(ct_curr) - abs(self._prev_ct_err)) - rc.beta_hdg * (
-            abs(hdg_curr) - abs(self._prev_hdg_err)
-        )
-
-        # Smoothness
+        # === SMOOTHNESS ===
         a_prev = self._prev_action
         a = np.array(action, dtype=float)
         r_smooth = -rc.beta_smooth * float(np.sum((a - a_prev) ** 2))
 
-        # NEW: Velocity bonus (encourage forward motion)
-        v_cmd, w_cmd = float(action[0]), float(action[1])
-        r_velocity = rc.velocity_bonus * max(0.0, v_cmd)
+        # === NO-PROGRESS PENALTY ===
+        v_cmd = float(action[0])
+        r_stuck = 0.0
+        if env.goal_xy is not None and self._prev_goal_distance is not None:
+            goal_progress = self._prev_goal_distance - curr_goal_dist
+            if abs(goal_progress) < rc.stuck_progress_eps and v_cmd < rc.stuck_speed_eps:
+                self._no_progress_count += 1
+            else:
+                self._no_progress_count = 0
+            if self._no_progress_count >= rc.stuck_steps:
+                r_stuck = -rc.stuck_penalty
         
-        # NEW: Spin penalty (discourage excessive rotation without progress)
-        # Only penalize high angular velocity if linear velocity is low
-        if v_cmd < 0.1 and abs(w_cmd) > 0.5:  # Spinning in place
-            r_spin = -rc.spin_penalty * abs(w_cmd)
-        else:
-            r_spin = 0.0
+        # Update step counter (for completeness / logging)
+        self._episode_step_count += 1
 
-        # Combine step rewards
-        r_step = r_prog + r_risk + r_path + r_smooth + r_velocity + r_spin
+        # === COMBINE ===
+        r_step = r_goal + r_risk + r_smooth + r_stuck
         
-        # Apply step reward clipping (separate from terminal rewards)
+        # Apply step reward clipping (terminal rewards bypass this)
         r_step = float(np.clip(r_step, -rc.step_reward_clip, rc.step_reward_clip))
         return r_step

@@ -68,7 +68,8 @@ class PygameRenderer:
         if self._view is None:
             self._view = self._make_view(workspace, self._win_size)
 
-        if self._surf_grid is None and grid_img is not None:
+        # Always rebuild grid surface when grid_img is available (fixes episode-to-episode map caching bug)
+        if grid_img is not None:
             self._surf_grid = self._make_grid_surface(pg, grid_img, workspace)
 
         # draw occupancy grid (preserve crisp cells: nearest-neighbor + letterbox)

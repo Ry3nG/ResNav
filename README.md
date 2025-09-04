@@ -73,32 +73,20 @@ python scripts/blockage_demo.py --controller ppapf
 
 ### Training & Evaluation (PPO on Blockage)
 
-Train a PPO agent on randomized blockage maps. The training script now includes best‑practice defaults: multi‑env parallelism, episodic monitoring, evaluation, checkpointing, optional normalization, and W&B integration.
+Train a PPO agent on randomized blockage maps. The training script ships with safety‑oriented reward shaping and sensible defaults: SDE on, observation/reward normalization on, lower clip range, light entropy regularization, periodic evaluation and checkpoints, and W&B in offline mode by default.
 
-Recommended command (8 envs, normalization, eval + checkpoints):
+Recommended large run (8 envs, 3M steps):
 
 ```bash
 python scripts/train_blockage_ppo.py \
-  --timesteps 5000000 \
+  --timesteps 3000000 \
   --num-envs 8 \
-  --norm-obs --norm-reward \
-  --eval-freq 20000 --eval-episodes 5 \
-  --checkpoint-freq 50000 \
-  --run-name exp_blockage_ppo_seed42 \
-  --seed 42
-```
-
-Headless/offline W&B example:
-
-```bash
-python scripts/train_blockage_ppo.py \
-  --timesteps 1000000 --num-envs 4 \
-  --norm-obs --norm-reward \
-  --wandb-mode offline --no-wandb
+  --run-name risk10_margin12_sde_clip01_seed0 \
+  --seed 0
 ```
 
 Notes:
-- Normalization is now opt‑in. Use `--norm-obs --norm-reward` for stability. If used, keep and pass `vecnormalize.pkl` to evaluation.
+- Defaults: `--use-sde` on, `--clip-range 0.1`, `--ent-coef 0.01`, `--norm-obs/--norm-reward` on, `--wandb-mode offline`.
 - The script saves best model, periodic checkpoints, TB logs, and `config.yaml` under `logs/ppo_blockage/<run_name>/`.
 - Success/collision/timeout rates are logged during training (TensorBoard/W&B).
 
@@ -108,7 +96,8 @@ Evaluate a trained model (headless metrics):
 python scripts/eval_blockage_ppo.py \
   --model logs/ppo_blockage/<run_name>/ppo_blockage.zip \
   --vecnorm logs/ppo_blockage/<run_name>/vecnormalize.pkl \
-  --episodes 50
+  --episodes 200 \
+  --bins "0.0,0.4,0.6,1.0,10.0"
 ```
 
 Evaluate visually (on‑screen rendering):
@@ -133,7 +122,7 @@ python scripts/train_blockage_ppo.py \
 Notes:
 - The environment regenerates a new blockage scenario each episode.
 - Two-grid convention applies: sensing grid for LiDAR; C-space grid for collisions.
-- Rewards emphasize path progress, safety (clearance), smoothness, and path tracking.
+- Rewards (simplified) emphasize goal‑distance progress, clearance‑based risk penalty, smoothness, and a gentle no‑progress penalty; terminal collision penalty is stronger to disincentivize “fast crash”.
 
 
 ## RL Formulation
