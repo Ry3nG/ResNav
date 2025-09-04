@@ -391,8 +391,10 @@ def main():
 
     # Save final artifacts
     model.save(str(outdir / "ppo_blockage"))
-    if isinstance(vec, VecNormalize):
-        vec.save(str(outdir / "vecnormalize.pkl"))
+    # Fix: Use helper function to find VecNormalize wrapper in the stack
+    normalize_wrapper = _find_wrapper(vec, VecNormalize)
+    if normalize_wrapper is not None:
+        normalize_wrapper.save(str(outdir / "vecnormalize.pkl"))
     # Note: envs and W&B finalized in finally block above
 
 
