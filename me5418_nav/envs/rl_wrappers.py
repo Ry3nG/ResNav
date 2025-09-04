@@ -12,18 +12,27 @@ from ..maps import create_blockage_scenario, BlockageScenarioConfig
 
 @dataclass
 class RewardConfig:
-    alpha_progress: float = 1.0
-    beta_risk: float = 25.0
+    # Progress reward (increased for stronger incentive)
+    alpha_progress: float = 2.5
+    # Safety penalties (reduced beta_risk to be less conservative)
+    beta_risk: float = 8.0
     beta_lat: float = 0.5
     beta_hdg: float = 0.1
     beta_smooth: float = 0.05
+    # Safety margins
     base_margin_m: float = 0.10
     kv_margin_s: float = 0.05
     k_softplus: float = 10.0
+    # Terminal rewards (rebalanced)
     goal_bonus: float = 50.0
     collision_penalty: float = 50.0
-    timeout_penalty: float = 10.0
-    clip_abs: float = 5.0
+    timeout_penalty: float = 25.0  # Increased from 10.0 to make timeout costlier
+    # Exploration incentives (new)
+    velocity_bonus: float = 0.1
+    spin_penalty: float = 1.0
+    # Reward clipping (fixed)
+    clip_abs: float = 60.0  # Increased from 5.0 to not clip terminal rewards
+    step_reward_clip: float = 8.0  # Separate clipping for step rewards
 
 
 class BlockageRLWrapper(gym.Wrapper):
@@ -206,6 +215,20 @@ class BlockageRLWrapper(gym.Wrapper):
         a = np.array(action, dtype=float)
         r_smooth = -rc.beta_smooth * float(np.sum((a - a_prev) ** 2))
 
-        r = r_prog + r_risk + r_path + r_smooth
-        r = float(np.clip(r, -rc.clip_abs, rc.clip_abs))
-        return r
+        # NEW: Velocity bonus (encourage forward motion)
+        v_cmd, w_cmd = float(action[0]), float(action[1])
+        r_velocity = rc.velocity_bonus * max(0.0, v_cmd)
+        
+        # NEW: Spin penalty (discourage excessive rotation without progress)
+        # Only penalize high angular velocity if linear velocity is low
+        if v_cmd < 0.1 and abs(w_cmd) > 0.5:  # Spinning in place
+            r_spin = -rc.spin_penalty * abs(w_cmd)
+        else:
+            r_spin = 0.0
+
+        # Combine step rewards
+        r_step = r_prog + r_risk + r_path + r_smooth + r_velocity + r_spin
+        
+        # Apply step reward clipping (separate from terminal rewards)
+        r_step = float(np.clip(r_step, -rc.step_reward_clip, rc.step_reward_clip))
+        return r_step
