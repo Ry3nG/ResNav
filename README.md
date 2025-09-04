@@ -62,6 +62,37 @@ python scripts/blockage_demo.py --controller dwa
 python scripts/blockage_demo.py --controller ppapf
 ```
 
+### Training & Evaluation (PPO on Blockage)
+
+Train a PPO agent on randomized blockage maps (headless):
+
+```bash
+python scripts/train_blockage_ppo.py --timesteps 200000 --seed 0 --num-envs 1
+```
+
+Evaluate a trained model (headless metrics):
+
+```bash
+python scripts/eval_blockage_ppo.py \
+  --model logs/ppo_blockage/seed_0/ppo_blockage.zip \
+  --vecnorm logs/ppo_blockage/seed_0/vecnormalize.pkl \
+  --episodes 50
+```
+
+Evaluate visually (on-screen rendering):
+
+```bash
+python scripts/eval_blockage_ppo.py \
+  --model logs/ppo_blockage/seed_0/ppo_blockage.zip \
+  --vecnorm logs/ppo_blockage/seed_0/vecnormalize.pkl \
+  --episodes 5 --render
+```
+
+Notes:
+- The environment regenerates a new blockage scenario each episode.
+- Two-grid convention applies: sensing grid for LiDAR; C-space grid for collisions.
+- Rewards emphasize path progress, safety (clearance), smoothness, and path tracking.
+
 
 ## RL Formulation
 
@@ -84,4 +115,3 @@ python scripts/blockage_demo.py --controller ppapf
 - Deadlock Rate
 - Task Completion Time
 - Path Following Accuracy
-

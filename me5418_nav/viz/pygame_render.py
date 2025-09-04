@@ -136,6 +136,12 @@ class PygameRenderer:
                 "w_cmd",
                 "step",
                 "wp_idx",
+                # Eval overlays
+                "episode",
+                "reward",
+                "clearance",
+                "action",
+                "progress",
             ]
             for k in keys:
                 if k in status and status[k] is not None:
