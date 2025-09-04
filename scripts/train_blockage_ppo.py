@@ -21,7 +21,6 @@ from stable_baselines3.common.vec_env import (
     DummyVecEnv,
     SubprocVecEnv,
     VecNormalize,
-    VecMonitor,
     VecCheckNan,
 )
 from stable_baselines3.common.monitor import Monitor
@@ -317,17 +316,30 @@ def main():
         except Exception:
             callbacks.append(WandbCallback())
 
+    # Helper: find a wrapper instance in a possibly stacked VecEnv
+    def _find_wrapper(env, wrapper_type):
+        from stable_baselines3.common.vec_env import VecEnvWrapper
+
+        e = env
+        while isinstance(e, VecEnvWrapper):
+            if isinstance(e, wrapper_type):
+                return e
+            e = e.venv
+        return None
+
     # Evaluation callback on a deterministic eval env
     if args.eval_freq and args.eval_freq > 0:
         eval_env_fn = make_env(int(rng.integers(0, 2**31 - 1)), scen_cfg, rew_cfg, monitor_file=str((monitor_dir / "eval_env.csv").as_posix()))
         eval_vec = DummyVecEnv([eval_env_fn])
-        if isinstance(vec, VecNormalize):
-            # Share running stats but keep eval deterministic
-            eval_vec = VecNormalize(eval_vec, training=False, norm_obs=bool(args.norm_obs), norm_reward=False)
-            if isinstance(vec, VecNormalize):
-                # copy normalization stats if present
-                eval_vec.obs_rms = vec.obs_rms
-                eval_vec.ret_rms = vec.ret_rms
+        # If training env uses VecNormalize anywhere in its stack, wrap eval too and sync stats
+        train_norm = _find_wrapper(vec, VecNormalize)
+        if train_norm is not None:
+            eval_vec = VecNormalize(eval_vec, training=False, norm_obs=train_norm.norm_obs, norm_reward=False)
+            # copy normalization stats
+            eval_norm = _find_wrapper(eval_vec, VecNormalize)
+            if eval_norm is not None:
+                eval_norm.obs_rms = train_norm.obs_rms
+                eval_norm.ret_rms = train_norm.ret_rms
         # Keep wrapper stacks consistent with training env
         eval_vec = VecCheckNan(eval_vec, raise_exception=True)
         stop_cb = None
