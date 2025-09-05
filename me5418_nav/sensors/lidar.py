@@ -1,55 +1,46 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Tuple, Any
+import math
+from typing import Tuple
 import numpy as np
-from ..constants import LIDAR_BEAMS, LIDAR_FOV_DEG, LIDAR_RANGE_M, LIDAR_STEP_M
 
 
-@dataclass
 class Lidar:
-    n_beams: int = LIDAR_BEAMS
-    fov: float = np.deg2rad(LIDAR_FOV_DEG)
-    max_range: float = LIDAR_RANGE_M
-    step: float = LIDAR_STEP_M
+    def __init__(self, beams: int, fov_deg: float, max_range_m: float, step_m: float):
+        self.beams = int(beams)
+        self.fov = float(math.radians(fov_deg))
+        self.max_range = float(max_range_m)
+        self.step = float(step_m)
+        self.rel_angles = np.linspace(-self.fov / 2.0, self.fov / 2.0, self.beams)
 
-    def beam_angles(self, heading: float) -> np.ndarray:
-        half = self.fov / 2
-        rel = (
-            np.array([0.0])
-            if self.n_beams == 1
-            else np.linspace(-half, half, self.n_beams)
-        )
-        return heading + rel
-
-    def cast(
-        self, pose: Tuple[float, float, float], grid: Any
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Cast LiDAR rays on the provided occupancy grid.
-
-        Recommendation: pass the raw sensing grid (un-inflated) so that
-        ranges reflect the true obstacle geometry. Collision checks should be
-        performed against the C-space grid elsewhere.
-        """
-        x, y, theta = pose
-        angles = self.beam_angles(theta)
-        ranges = np.full((self.n_beams,), self.max_range, dtype=float)
-        endpoints = np.zeros((self.n_beams, 2), dtype=float)
-        use_rtb = hasattr(grid, "isoccupied") and callable(getattr(grid, "isoccupied"))
-        for i, ang in enumerate(angles):
-            r = 0.0
-            cos_a, sin_a = np.cos(ang), np.sin(ang)
-            while r < self.max_range:
-                r += self.step
-                px, py = x + r * cos_a, y + r * sin_a
-                if use_rtb:
-                    if grid.isoccupied((px, py)):
-                        break
-                else:
-                    gy, gx = grid.world_to_grid(px, py)
-                    if grid.is_occupied_index(gy, gx):
-                        break
-            ranges[i] = min(r, self.max_range)
-            endpoints[i] = (x + ranges[i] * cos_a, y + ranges[i] * sin_a)
-        return ranges, endpoints
+    def sense(self, grid: np.ndarray, pose: Tuple[float, float, float], res: float, map_w_m: float, map_h_m: float) -> Tuple[np.ndarray, float]:
+        x, y, th = pose
+        out = np.empty(self.beams, dtype=float)
+        H, W = grid.shape
+        for i, a_rel in enumerate(self.rel_angles):
+            a = th + float(a_rel)
+            ca = math.cos(a)
+            sa = math.sin(a)
+            d = 0.0
+            hit = False
+            while d < self.max_range:
+                xp = x + ca * d
+                yp = y + sa * d
+                if xp < 0.0 or yp < 0.0 or xp >= map_w_m or yp >= map_h_m:
+                    # Reached map boundary: report distance to boundary instead of max range
+                    out[i] = min(d, self.max_range)
+                    break
+                ii = int(np.clip(yp / res, 0, H - 1))
+                jj = int(np.clip(xp / res, 0, W - 1))
+                if grid[ii, jj]:
+                    hit = True
+                    break
+                d += self.step
+            if hit:
+                out[i] = d
+            else:
+                # If loop ended due to range limit without hits/boundary, set to max range
+                if d >= self.max_range and (xp >= 0.0 and yp >= 0.0 and xp < map_w_m and yp < map_h_m):
+                    out[i] = self.max_range
+                # Else value already written when boundary was reached
+        return out, float(np.min(out))

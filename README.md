@@ -1,170 +1,195 @@
-# ME5418 Project: Learning When to Yield and When to Pass for Unified AMR Navigation
+# ME5418 AMR Bottleneck Navigation
 
-## Overview
-### Grid usage convention
+A reinforcement learning environment for Autonomous Mobile Robot (AMR) navigation in industrial bottleneck scenarios. This project focuses on learning continuous control policies that can handle temporary blockages, occluded intersections, and narrow counter-flows without online global replanning.
 
-We distinguish two grids throughout the codebase:
+## Key Features
 
-- Sensing grid (raw occupancy): the world obstacle geometry. Used for LiDAR
-  simulation and rendering. It matches what sensors "see".
-- Collision grid (C-space): the sensing grid inflated by the robot radius and
-  safety margin. Used by the environment for feasibility and collision checks
-  (reset feasibility and step() collision). Controllers may optionally consult
-  C-space for trajectory feasibility; the provided DWA is sensor-driven and
-  uses only the sensing grid for LiDAR and approximate clearance.
-
-Controllers should:
-- Use the sensing grid when calling LiDAR.cast for realistic ranges
-- Use the collision grid when performing any trajectory collision checks
-
-This separation avoids "looks free" vs "collides in env" inconsistencies and
-matches common robotics practice.
-
-This project focuses on training a reinforcement learning policy for a single differential-drive Autonomous Mobile Robot (AMR) to navigate 2D factory-style environments with dynamic bottlenecks. The core challenge is to learn **when to yield and wait for a clear path, and when to confidently pass** using only local sensing, without online global replanning.
-
-## Problem Statement
-
-Classical navigation stacks frequently exhibit undesirable behaviors like oscillation, freezing, or deadlock in industrial scenarios such as:
-- **Temporary aisle blockages**
-- **Occluded intersections**
-- **Narrow counter-flows with non-cooperative agents**
-
-This project proposes a unified continuous control policy that integrates path tracking with intelligent, temporal decision-making to navigate these common industrial "pain points" more efficiently than classical methods.
-
-## Key Constraints & Objectives
-
-- **Fixed Global Path**: A* planned path computed once at task start - no online replanning
-- **Local Sensing**: Sparse 2D LiDAR only (24–36 beams, 240° FOV, 4 m range)
-- **Non-cooperative Environment**: Static obstacles + dynamic movers that don't yield
-- **Continuous Control**: Direct velocity commands (v, ω) output
-
-## Target Scenarios
-
-The policy is specifically designed to handle three challenging micro-benchmarks:
-
-1. **Temporary Blockage**: Navigate through narrow gaps around partial obstructions
-2. **Occluded Merge**: Safely cross intersections with limited visibility
-3. **Narrow Counterflow**: Pass oncoming agents in constrained aisles
-
-
-## Installation
-
-### Using Conda
-```bash
-conda env create -f environment.yml
-conda activate me5418-nav
-pip install -e .
-```
-
-### Weights & Biases Setup (Optional)
-For experiment tracking and visualization:
-```bash
-conda install -n me5418-nav wandb
-wandb login
-```
+- **Continuous Control**: Learns (v, ω) velocities for differential-drive robots
+- **Sparse Sensing**: Uses only local 2D LiDAR (24 beams, 240° FOV, 4m range)
+- **Path Tracking**: Maintains continuous progress along pre-computed global paths
+- **Industrial Scenarios**: Specialized for warehouse/factory bottleneck navigation
+- **Modular Design**: Clean architecture with configurable components
 
 ## Quick Start
 
-### Run Baseline Evaluation
-```bash
-python scripts/blockage_demo.py --controller dwa
-python scripts/blockage_demo.py --controller ppapf
-```
-
-### Training & Evaluation (PPO on Blockage)
-
-Train a PPO agent on randomized blockage maps. The training script ships with safety‑oriented reward shaping and sensible defaults: SDE on, observation/reward normalization on, lower clip range, light entropy regularization, periodic evaluation and checkpoints, and W&B in offline mode by default.
-
-Recommended large run (8 envs, 3M steps):
+### Installation
 
 ```bash
-python scripts/train_blockage_ppo.py \
-  --timesteps 3000000 \
-  --num-envs 8 \
-  --run-name risk10_margin12_sde_clip01_seed0 \
-  --seed 0
+git clone <repository-url>
+cd ME5418-Project
+conda env create -f environment.yml
+conda activate me5418-nav
 ```
 
-Notes:
-- Defaults: `--use-sde` on, `--clip-range 0.1`, `--ent-coef 0.01`, `--norm-obs/--norm-reward` on, `--wandb-mode offline`.
-- The script saves best model, periodic checkpoints, TB logs, and `config.yaml` under `logs/ppo_blockage/<run_name>/`.
-- Success/collision/timeout rates are logged during training (TensorBoard/W&B).
-
-Evaluate a trained model (headless metrics):
+### Train a Policy
 
 ```bash
-python scripts/eval_blockage_ppo.py \
-  --model logs/ppo_blockage/<run_name>/ppo_blockage.zip \
-  --vecnorm logs/ppo_blockage/<run_name>/vecnormalize.pkl \
-  --episodes 200 \
-  --bins "0.0,0.4,0.6,1.0,10.0"
+python scripts/train.py --config configs/ppo_default.yaml --outdir runs/ppo
 ```
 
-Evaluate visually (on‑screen rendering):
+### Evaluate and Generate GIF
 
 ```bash
-python scripts/eval_blockage_ppo.py \
-  --model logs/ppo_blockage/<run_name>/ppo_blockage.zip \
-  --vecnorm logs/ppo_blockage/<run_name>/vecnormalize.pkl \
-  --episodes 5 --render
+# Evaluate the most recent training run and save a GIF
+LATEST_RUN=$(ls -td runs/ppo/* | head -n1)
+python scripts/eval.py \
+  --model "$LATEST_RUN/best_model.zip" \
+  --episodes 50 \
+  --gif runs/eval/ppo_eval.gif
 ```
 
-Resume training from a checkpoint:
+## Environment Details
 
-```bash
-python scripts/train_blockage_ppo.py \
-  --resume-from logs/ppo_blockage/<run_name>/checkpoints/ppo_blockage_500000_steps.zip \
-  --resume-vecnorm logs/ppo_blockage/<run_name>/vecnormalize.pkl \
-  --run-name <run_name> \
-  --timesteps 5000000 --num-envs 8
+### Observation Space (structured)
+- Shape (flattened): `L + 2 + 2 + 2K`
+- Semantic fields:
+  - **LiDAR** `(L,)`: normalized distances [0,1]
+  - **Kinematics** `(2,)`: [v_norm, ω_norm]
+  - **Path errors** `(2,)`: [e_lat_norm, e_head_norm]
+  - **Preview** `(K,2)`: future waypoints in robot frame (clipped and normalized)
+
+### Action Space (2-dim)
+- **Linear velocity**: v ∈ [0, 1.5] m/s (mapped from [-1,1])
+- **Angular velocity**: ω ∈ [-2, 2] rad/s (direct mapping)
+
+### Reward Function
+```python
+reward = w_prog * progress +
+         - w_lat * |lateral_error| +
+         - w_head * |heading_error| +
+         - w_clear * exp(-min_lidar_dist/safe_dist) +
+         - w_smoothness * |velocity_changes| +
+         + terminal_rewards
 ```
 
-Notes:
-- The environment regenerates a new blockage scenario each episode.
-- Two-grid convention applies: sensing grid for LiDAR; C-space grid for collisions.
-- Rewards (simplified) emphasize goal‑distance progress, clearance‑based risk penalty, smoothness, and a gentle no‑progress penalty; terminal collision penalty is stronger to disincentivize “fast crash”.
+## Programmatic Usage
 
+### Basic Environment
 
-## RL Formulation
+```python
+from me5418_nav.envs import UnicycleNavEnv
 
-- **State Space**: LiDAR readings + robot kinematics + path context
-- **Action Space**: Continuous velocity commands [v, ω]
-  - v ∈ [0.0, 1.5] m/s (linear velocity)
-  - ω ∈ [-2.0, 2.0] rad/s (angular velocity)
-- **Algorithm**: Proximal Policy Optimization (PPO) with tanh-squashed Gaussian policy
-- **Rewards**: Path progress + collision avoidance + smoothness + goal reaching
+env = UnicycleNavEnv()
+obs, info = env.reset()
 
-## Baselines
+for step in range(1000):
+    action = env.action_space.sample()  # Random policy
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated or truncated:
+        obs, info = env.reset()
+```
 
-- Pure Pursuit + Artificial Potential Fields (PP+APF)
-- Dynamic Window Approach (DWA)
+### Custom Configuration
 
-## Evaluation Metrics
+```python
+from me5418_nav.config import EnvConfig, RewardConfig, LidarConfig, PathPreviewConfig
+from me5418_nav.envs import UnicycleNavEnv
 
-- Success Rate
-- Collision Rate
-- Deadlock Rate
-- Task Completion Time
-- Path Following Accuracy
+# Create custom config
+config = EnvConfig(
+    reward=RewardConfig(w_prog=1.5, w_lat=0.1, clearance_safe_m=0.5),
+    lidar=LidarConfig(beams=36, fov_deg=270, max_range_m=4.0),
+    preview=PathPreviewConfig(K=5, ds=0.6, range_m=3.0),
+    scenario="blockage",
+    scenario_kwargs={"num_pallets": 2}  # or drive via curriculum (see YAML)
+)
 
-## Training Script Options (Summary)
-- Run & device: `--timesteps`, `--seed`, `--device {auto,cpu,cuda}`, `--torch-deterministic`, `--run-name`
-- Envs & wrappers: `--num-envs`, `--norm-obs`, `--norm-reward`, `--clip-obs`
-- PPO core: `--n-steps` (total rollout across envs), `--batch-size`, `--gamma`, `--gae-lambda`, `--n-epochs`, `--learning-rate`, `--clip-range`, `--ent-coef`, `--vf-coef`, `--max-grad-norm`, `--target-kl`, `--use-sde`, `--sde-sample-freq`, `--policy-arch`
-- Schedules: `--lr-schedule {constant,linear}`, `--clip-schedule {constant,linear}`
-- Eval/checkpoints: `--eval-freq`, `--eval-episodes`, `--checkpoint-freq`, `--early-stop-patience`
-- W&B: `--no-wandb`, `--wandb-project`, `--wandb-group`, `--wandb-mode` (e.g., `offline`)
-- Resume: `--resume-from`, `--resume-vecnorm`
+env = UnicycleNavEnv(config)
+```
 
-See `python scripts/train_blockage_ppo.py --help` for full details.
+### Training with Stable-Baselines3 (quick demo)
 
-## Logs & Artifacts
-- Base dir: `logs/ppo_blockage/<run_name>/`
-- Files/dirs:
-  - `ppo_blockage.zip`: final policy; `best_model/` contains best eval policy
-  - `vecnormalize.pkl`: VecNormalize stats when normalization is enabled
-  - `checkpoints/`: periodic checkpoints by step count
-  - `monitor/`: per‑env CSVs of episodic returns/lengths and outcome flags
-  - `eval/`: evaluation logs and summaries
-  - `tb/`: TensorBoard logs; W&B runs if enabled
-  - `config.yaml`: saved CLI config for reproducibility
+```python
+from stable_baselines3 import PPO
+from me5418_nav.envs import UnicycleNavEnv
+
+env = UnicycleNavEnv()  # headless by default; call env.render('rgb_array') if needed
+model = PPO("MlpPolicy", env, verbose=1)
+model.learn(total_timesteps=100000)
+model.save("ppo_amr_navigation")
+```
+
+## Configuration
+
+All parameters can be configured via YAML files. See `configs/ppo_default.yaml`:
+
+```yaml
+env:
+  dt: 0.1
+  max_steps: 400
+  render_mode: null
+  scenario: blockage
+  scenario_kwargs:
+    num_pallets: 1
+  reward:
+    w_prog: 1.0
+    w_lat: 0.2
+    w_head: 0.1
+    w_clear: 0.4
+    w_dv: 0.05
+    w_dw: 0.02
+    R_goal: 50.0
+    R_collide: 50.0
+    R_timeout: 10.0
+    clearance_safe_m: 0.5
+  lidar:
+    beams: 24
+    fov_deg: 240
+    max_range_m: 4.0
+    step_m: 0.025
+  preview:
+    K: 5
+    ds: 0.6
+    range_m: 3.0
+  # Optional curriculum (example)
+  curriculum:
+    enabled: false
+    stages:
+      - episode_range: [0, 20000]
+        num_pallets_range: [1, 1]
+        corridor_width_range: [2.6, 3.0]
+      - episode_range: [20000, 60000]
+        num_pallets_range: [1, 2]
+        corridor_width_range: [2.4, 2.8]
+      - episode_range: [60000, 100000]
+        num_pallets_range: [2, 3]
+        corridor_width_range: [2.2, 2.6]
+```
+
+## Architecture
+
+```
+me5418_nav/
+├── envs/           # Gym environment interface
+├── models/         # Robot dynamics (UnicycleModel)
+├── navigation/     # Path tracking algorithms
+├── sensors/        # LiDAR simulation
+├── scenarios/      # Environment generation (blockage, etc.)
+├── visualization/  # Pygame renderer
+└── config.py       # Configuration system
+```
+
+## Scenarios
+
+### Temporary Blockage
+- Corridor with 1-3 pallets partially blocking the path
+- Robot must navigate through remaining gaps
+- Corridor width: 2.2-3.0m, robot diameter: 0.5m
+
+## Performance Metrics
+
+The environment tracks key metrics during evaluation:
+- **Success rate**: Episodes reaching the goal
+- **Collision rate**: Episodes ending in collision
+- **Timeout rate**: Episodes exceeding time limit
+- **Mean completion time**: Average time for successful episodes
+- **Path following length**: Progress along the reference path
+
+## Research Applications
+
+This environment is designed for studying:
+- Continuous control in constrained spaces
+- Path tracking vs. obstacle avoidance trade-offs
+- Local sensing for navigation (no global mapping)
+- Industrial robotics scenarios
+- Comparison with classical methods (DWA, Pure Pursuit + APF)

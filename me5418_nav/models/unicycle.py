@@ -40,7 +40,6 @@ class UnicycleModel:
             ROBOT_W_MAX_RPS,
         ),
     ) -> None:
-        self._veh = None
         self._last_state = UnicycleState(0.0, 0.0, 0.0, 0.0, 0.0)
         self.v_min, self.v_max = v_limits
         self.w_min, self.w_max = omega_limits
@@ -54,14 +53,14 @@ class UnicycleModel:
         return self._last_state
 
     def step(self, action: Tuple[float, float], dt: float) -> UnicycleState:
-        v_cmd, w_cmd = float(action[0]), float(action[1])
+        v_cmd, w_cmd = action[0], action[1]
         # Set the timestep
         self._veh._dt = dt
         # For Unicycle, step expects (v, w) control inputs  
         self._veh.step((v_cmd, w_cmd))
-        x = float(self._veh.x[0])
-        y = float(self._veh.x[1])
-        th = float(self._veh.x[2])
+        x = self._veh.x[0]
+        y = self._veh.x[1]
+        th = self._veh.x[2]
         self._last_state = UnicycleState(x, y, th, v_cmd, w_cmd)
         return self._last_state
 

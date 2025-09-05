@@ -1,10 +1,2 @@
-"""ME5418 Navigation sandbox package."""
+# Package init for me5418_nav
 
-from .sensors.lidar import Lidar
-from .models.unicycle import UnicycleModel, UnicycleState
-
-__all__ = [
-    "Lidar",
-    "UnicycleModel",
-    "UnicycleState",
-]

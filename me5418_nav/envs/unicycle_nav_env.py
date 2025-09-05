@@ -1,433 +1,320 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, Any
+from typing import Tuple, Dict, Optional
+import math
 import numpy as np
-import scipy.ndimage as ndi
-
 import gymnasium as gym
 from gymnasium import spaces
 
-from roboticstoolbox.mobile.OccGrid import BinaryOccupancyGrid
-from ..models.unicycle import UnicycleModel, UnicycleState
-from ..sensors.lidar import Lidar
-from ..constants import (
-    DT_S,
+from me5418_nav.models.unicycle import UnicycleModel, UnicycleState
+from me5418_nav.constants import (
     GRID_RESOLUTION_M,
-    LIDAR_BEAMS,
-    LIDAR_FOV_DEG,
-    LIDAR_RANGE_M,
-    ROBOT_RADIUS_M,
-    EPISODE_TIME_S,
-    GOAL_RADIUS_M,
+    ROBOT_DIAMETER_M,
+    ROBOT_COLLISION_RADIUS_M,
+    GOAL_TOLERANCE_M,
 )
-from ..viz.pygame_render import PygameRenderer
-from ..types import Grids
+from me5418_nav.navigation.path_tracker import PathTracker
+from me5418_nav.sensors.lidar import Lidar
+from me5418_nav.scenarios.blockage import (
+    BlockageScenarioConfig,
+    create_blockage_scenario,
+)
+from me5418_nav.visualization.pygame_viewer import PygameViewer
+from me5418_nav.config import EnvConfig
+from me5418_nav.observation import Observation
+from me5418_nav.config import CurriculumManager
+from scipy.ndimage import binary_dilation
 
 
-@dataclass
-class EnvConfig:
-    dt: float = DT_S
-    map_size: Tuple[int, int] = (300, 400)  # cells (H, W); actual meters depend on res
-    res: float = GRID_RESOLUTION_M
-    lidar_beams: int = LIDAR_BEAMS
-    lidar_fov_deg: float = LIDAR_FOV_DEG
-    lidar_range: float = LIDAR_RANGE_M
-    goal_radius: float = GOAL_RADIUS_M
-    episode_time_s: float = EPISODE_TIME_S
-    robot_radius: float = ROBOT_RADIUS_M
-    # Previously hardcoded parameters
-    start_retry_attempts: int = 50
-    path_preview_step: int = 5
-    path_preview_count: int = 3
+def _wrap_pi(a: float) -> float:
+    return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _make_disk_selem(radius_cells: int) -> np.ndarray:
+    r = int(max(0, radius_cells))
+    yy, xx = np.ogrid[-r : r + 1, -r : r + 1]
+    return (xx * xx + yy * yy) <= (r * r)
 
 
 class UnicycleNavEnv(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
-    """
-    Gymnasium-compatible navigation environment for a unicycle robot.
+    metadata = {"render_modes": ["rgb_array", "human", "none"]}
 
-    Observation vector: [lidar (N), v, omega, path_error(2), wp_preview(6), norm_time(1)]
-    Action: [v_cmd, omega_cmd]
-    """
-
-    def __init__(
-        self,
-        cfg: Optional[EnvConfig] = None,
-        render_mode: Optional[str] = None,
-        grid: Optional[BinaryOccupancyGrid] = None,
-        path_waypoints: Optional[np.ndarray] = None,
-        start_pose: Optional[Tuple[float, float, float]] = None,
-        goal_xy: Optional[Tuple[float, float]] = None,
-    ) -> None:
-        self.cfg = cfg or EnvConfig()
-        self.rng = np.random.default_rng()
-        self.max_steps = int(self.cfg.episode_time_s / self.cfg.dt)
-        self._step_count = 0
-        self.render_mode = render_mode
-        # Rendering backends (lazy init)
-        self._fig = None  # matplotlib figure
-        self._ax = None  # matplotlib axes
-        self._pg: Optional[PygameRenderer] = None  # pygame renderer
-        H, W = self.cfg.map_size
-        self.grid = grid or BinaryOccupancyGrid(
-            np.zeros((H, W), dtype=bool), cellsize=self.cfg.res, origin=(0, 0)
-        )
-        # Precompute EDT and configuration-space (C-space) occupancy by inflating
-        # obstacles with the robot radius. Collision is center-in-occupied on C-space.
-        self._edt_m: np.ndarray | None = None  # distance to nearest obstacle (meters)
-        self._grid_cspace: BinaryOccupancyGrid = self._build_cspace_grid()
-        self._last_collision: bool = False
-        # Path/goal
-        self.path_waypoints = path_waypoints  # (M,2) or None
-        self.goal_xy = goal_xy
-        self._start_pose = start_pose
+    def __init__(self, config: Optional[Dict] = None):
+        super().__init__()
+        # Accept either a raw dict or an EnvConfig instance
+        if isinstance(config, EnvConfig):
+            self.conf = config
+        else:
+            self.conf = EnvConfig.from_dict(config)
+        self.dt = self.conf.dynamics.dt
+        self.v_max = self.conf.dynamics.v_max
+        self.w_max = self.conf.dynamics.w_max
+        self.render_mode = self.conf.render_mode
+        self._default_scenario = self.conf.scenario
+        self._default_scenario_kwargs = dict(self.conf.scenario_kwargs)
 
         self.lidar = Lidar(
-            n_beams=self.cfg.lidar_beams,
-            fov=np.deg2rad(self.cfg.lidar_fov_deg),
-            max_range=self.cfg.lidar_range,
-            step=0.02,
+            self.conf.lidar.beams,
+            self.conf.lidar.fov_deg,
+            self.conf.lidar.max_range_m,
+            self.conf.lidar.step_m,
         )
-        self.robot = UnicycleModel()
-
-        # Observation and action spaces
-        # Observation vector: [lidar (N), v, omega, path_error(2), wp_preview(6), norm_time(1)]
-        lidar_dim = self.cfg.lidar_beams
-        kinematics_dim = 2  # v, omega
-        path_error_dim = 2  # cross-track, heading error
-        preview_dim = self.cfg.path_preview_count * 2  # 3 waypoints * (dx, dy)
-        time_dim = 1  # normalized time
-
-        obs_size = lidar_dim + kinematics_dim + path_error_dim + preview_dim + time_dim
-        low = np.zeros((obs_size,), dtype=np.float32)
-        high = np.ones((obs_size,), dtype=np.float32) * self.cfg.lidar_range
-
-        # Velocity bounds
-        v_start = lidar_dim
-        high[v_start] = self.robot.v_max
-        low[v_start] = self.robot.v_min
-
-        # Angular velocity bounds
-        w_start = v_start + 1
-        high[w_start] = self.robot.w_max
-        low[w_start] = self.robot.w_min
-
-        # Path error bounds
-        path_err_start = w_start + 1
-        low[path_err_start : path_err_start + path_error_dim] = np.array(
-            [-5.0, -np.pi], dtype=np.float32
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+        obs_dim = self.conf.lidar.beams + 2 + 2 + 2 * self.conf.preview.K
+        self.observation_space = spaces.Box(
+            low=-1.0, high=1.0, shape=(obs_dim,), dtype=np.float32
         )
-        high[path_err_start : path_err_start + path_error_dim] = np.array(
-            [5.0, np.pi], dtype=np.float32
-        )
+        self._veh = UnicycleModel()
+        self._grid_raw = None
+        self._grid_infl = None
+        self._map_w_m = 0.0
+        self._map_h_m = 0.0
+        self._tracker: Optional[PathTracker] = None
+        self._goal_xy = (0.0, 0.0)
+        self._steps = 0
+        self._last_v = 0.0
+        self._last_w = 0.0
+        self._last_lidar_ranges = None
+        self._reward_weights = self.conf.reward
+        self._viewer: Optional[PygameViewer] = None
+        
+        # Curriculum learning system
+        self._curriculum = CurriculumManager(self.conf.curriculum) if self.conf.curriculum.enabled else None
+        self._episode_count = 0
 
-        # Waypoint preview bounds
-        preview_start = path_err_start + path_error_dim
-        low[preview_start : preview_start + preview_dim] = -self.cfg.lidar_range
-        high[preview_start : preview_start + preview_dim] = self.cfg.lidar_range
+    def _inflate_grid(self, grid: np.ndarray) -> np.ndarray:
+        r_cells = int(math.ceil(ROBOT_COLLISION_RADIUS_M / GRID_RESOLUTION_M))
+        selem = _make_disk_selem(r_cells)
+        return binary_dilation(grid, structure=selem)
 
-        # Time bounds
-        time_start = preview_start + preview_dim
-        low[time_start] = 0.0
-        high[time_start] = 1.0
-        self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
-        self.action_space = spaces.Box(
-            low=np.array([self.robot.v_min, self.robot.w_min], dtype=np.float32),
-            high=np.array([self.robot.v_max, self.robot.w_max], dtype=np.float32),
-            dtype=np.float32,
-        )
+    def _pose(self) -> Tuple[float, float, float]:
+        s = self._veh.get_state()
+        return float(s.x), float(s.y), float(s.theta)
 
-    def reset(
-        self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Reset the environment to initial state.
-
-        Args:
-            seed: Random seed for reproducible resets
-            options: Additional reset options (unused)
-
-        Returns:
-            tuple: (observation, info) where observation is the initial state
-                   and info contains reset metadata
-        """
-        if seed is not None:
-            self.rng = np.random.default_rng(seed)
-        self._step_count = 0
-        if self._start_pose is not None:
-            x, y, th = self._start_pose
-            # ensure start not inside obstacle; walk along path if needed
-            if (
-                hasattr(self._grid_cspace, "isoccupied")
-                and self._grid_cspace.isoccupied((x, y))
-                and self.path_waypoints is not None
-            ):
-                for j in range(1, self.cfg.start_retry_attempts):
-                    i = min(j, self.path_waypoints.shape[0] - 1)
-                    x, y = float(self.path_waypoints[i, 0]), float(
-                        self.path_waypoints[i, 1]
-                    )
-                    if not self._grid_cspace.isoccupied((x, y)):
-                        break
-            self.robot.reset(UnicycleState(x, y, th, 0.0, 0.0))
+    def _observe(self, lidar_data: Optional[Tuple[np.ndarray, float]] = None, path_errors: Optional[Tuple[float, float]] = None) -> np.ndarray:
+        x, y, th = self._pose()
+        
+        # Use provided LiDAR data if available, otherwise compute fresh
+        if lidar_data is not None:
+            ranges, _ = lidar_data
         else:
-            # default free-space start near origin
-            self.robot.reset(UnicycleState(1.0, 1.0, 0.0, 0.0, 0.0))
-        obs = self._get_obs()
-        info: Dict[str, Any] = {}
-        return obs, info
-
-    def step(self, action: Tuple[float, float]):
-        """
-        Execute one environment step with the given action.
-
-        Args:
-            action: Tuple of (linear_velocity, angular_velocity) commands
-                   - linear_velocity: m/s, within robot velocity limits
-                   - angular_velocity: rad/s, within robot angular velocity limits
-
-        Returns:
-            tuple: (observation, reward, terminated, truncated, info)
-                - observation: Current environment observation
-                - reward: Step reward (currently 0.0 for classical control)
-                - terminated: True if episode ended (collision or success)
-                - truncated: True if episode exceeded time limit
-                - info: Dict with 'collision' and 'success' flags
-
-        Raises:
-            ValueError: If action format is invalid or values out of range
-        """
-        # Input validation + clamping to robot limits
-        if not isinstance(action, (tuple, list, np.ndarray)) or len(action) != 2:
-            raise ValueError(
-                "Action must be a tuple/list/array of length 2: [v_cmd, omega_cmd]"
+            ranges, _ = self.lidar.sense(
+                self._grid_raw, (x, y, th), GRID_RESOLUTION_M, self._map_w_m, self._map_h_m
             )
-
-        v_cmd, omega_cmd = float(action[0]), float(action[1])
-        # Clamp to robot limits (source of truth)
-        v_cmd = float(np.clip(v_cmd, self.robot.v_min, self.robot.v_max))
-        omega_cmd = float(np.clip(omega_cmd, self.robot.w_min, self.robot.w_max))
-        self._step_count += 1
-        self.robot.step((v_cmd, omega_cmd), dt=self.cfg.dt)
-        obs = self._get_obs()
-        # Geometric collision: center-in-occupied on C-space grid
-        x, y, _ = self.robot.as_pose()
-        collision_static = bool(self._grid_cspace.isoccupied((x, y)))
-        collision_dynamic = self._check_dynamic_collisions(x, y)
-        collision = collision_static or collision_dynamic
-        success = False
-        if self.goal_xy is not None:
-            gx, gy = self.goal_xy
-            if np.hypot(gx - x, gy - y) <= self.cfg.goal_radius:
-                success = True
-        terminated = collision or success
-        truncated = self._step_count >= self.max_steps
-        # Classical controller demo does not require learning rewards.
-        # Return a neutral reward to satisfy Gym API without shaping.
-        reward = 0.0
-        self._last_collision = collision
-        info = {"collision": collision, "success": success}
-        return obs, reward, terminated, truncated, info
-
-    # -------- Rendering API ---------
-    def render(self):
-        """
-        Render the environment for visualization.
-
-        Returns:
-            None for 'human' mode, rgb_array for 'rgb_array' mode
-        """
-        if self.render_mode is None:
-            return None
-        # Choose pygame for 'human' interactive rendering; also use pygame for rgb_array
-        if self.render_mode == "human":
-            if self._pg is None:
-                self._pg = PygameRenderer()
-            # pass through; pygame manages its own window
-            self._pg.draw(self)
-            return None
-        elif self.render_mode == "rgb_array":
-            if self._pg is None:
-                self._pg = PygameRenderer()
-            return self._pg.draw_rgb_array(self)
+        lidar_norm = np.clip(ranges / self.conf.lidar.max_range_m, 0.0, 1.0)
+        
+        # Use provided path errors if available, otherwise compute fresh
+        if path_errors is not None:
+            e_lat, e_head = path_errors
         else:
+            e_lat, e_head = self._tracker.errors((x, y, th))
+        e_lat_n = float(np.clip(e_lat, -1.0, 1.0))
+        e_head_n = float(e_head / math.pi)  # Remove duplicate wrapping
+        previews = self._tracker.preview_points(
+            self.conf.preview.K, self.conf.preview.ds
+        )
+        rel = previews - np.array([x, y])[None, :]
+        c = math.cos(th)
+        s = math.sin(th)
+        rot = np.array([[c, -s], [s, c]])
+        rel_robot = rel @ rot
+        rel_robot = np.clip(rel_robot / self.conf.preview.range_m, -1.0, 1.0)
+        v = self._veh.get_state().v
+        w = self._veh.get_state().omega
+        v_n = float(np.clip(v / self.v_max, 0.0, 1.0))
+        w_n = float(np.clip(w / self.w_max, -1.0, 1.0))
+        obs_struct = Observation(
+            lidar=lidar_norm,
+            kinematics=np.array([v_n, w_n], dtype=np.float32),
+            path_errors=np.array([e_lat_n, e_head_n], dtype=np.float32),
+            preview=rel_robot.astype(np.float32),
+        )
+        return obs_struct.flatten()
+
+    def _compute_reward(
+        self,
+        ds: float,
+        e_lat: float,
+        e_head: float,
+        min_lidar: float,
+        dv: float,
+        dw: float,
+        terminated: bool,
+        collision: bool,
+        timeout: bool,
+    ) -> float:
+        w = self._reward_weights
+        r = 0.0
+        r += w.w_prog * max(0.0, ds)
+        r -= w.w_lat * abs(e_lat)
+        r -= w.w_head * abs(e_head)
+        r -= w.w_clear * math.exp(-max(0.0, min_lidar) / w.clearance_safe_m)
+        r -= w.w_dv * abs(dv)
+        r -= w.w_dw * abs(dw)
+        if terminated:
+            if collision:
+                r -= w.R_collide
+            elif timeout:
+                r -= w.R_timeout
+            else:
+                r += w.R_goal
+        return float(r)
+
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None):
+        super().reset(seed=seed)
+        rng = np.random.default_rng(seed)
+        scenario = (options or {}).get("scenario", self._default_scenario)
+        kwargs = (options or {}).get("kwargs", self._default_scenario_kwargs)
+        
+        # Apply curriculum learning if enabled
+        if self._curriculum:
+            stage = self._curriculum.get_stage_config(self._episode_count)
+            # Check if stage changed for logging
+            if self._curriculum.should_update_stage(self._episode_count):
+                print(f"[CURRICULUM] Episode {self._episode_count}: {self._curriculum.get_stage_name(self._episode_count)}")
+            # Create curriculum-controlled configuration
+            cfg = BlockageScenarioConfig.from_curriculum_stage(stage)
+        else:
+            # Use static configuration with single pallet count
+            num_pallets = int(kwargs.get("num_pallets", 1))
+            cfg = BlockageScenarioConfig(num_pallets_min=num_pallets, num_pallets_max=num_pallets)
+        
+        if scenario == "blockage":
+            grid, waypoints, start_pose, goal_xy, info = create_blockage_scenario(
+                cfg, rng
+            )
+        else:
+            raise ValueError("unknown scenario")
+        self._grid_raw = grid
+        self._grid_infl = self._inflate_grid(grid)
+        self._map_h_m = grid.shape[0] * GRID_RESOLUTION_M
+        self._map_w_m = grid.shape[1] * GRID_RESOLUTION_M
+        self._goal_xy = goal_xy
+        self._tracker = PathTracker(waypoints)
+        self._veh.reset(
+            UnicycleState(start_pose[0], start_pose[1], start_pose[2], 0.0, 0.0)
+        )
+        self._steps = 0
+        self._last_v = 0.0
+        self._last_w = 0.0
+        self._last_lidar_ranges = None
+        self._viewer = None
+        
+        # Increment episode count for curriculum learning
+        self._episode_count += 1
+        
+        obs = self._observe()
+        info_out = {"scenario": scenario, **info}
+        return obs, info_out
+
+    def step(self, action: np.ndarray):
+        a = np.asarray(action, dtype=float)
+        a_v = float(np.clip(a[0], -1.0, 1.0))
+        a_w = float(np.clip(a[1], -1.0, 1.0))
+        v_cmd = 0.5 * (a_v + 1.0) * self.v_max
+        w_cmd = a_w * self.w_max
+        v_prev = self._veh.get_state().v
+        w_prev = self._veh.get_state().omega
+        self._veh.step((v_cmd, w_cmd), self.dt)
+        x, y, th = self._pose()
+        _, s_ptr, ds, q, t_hat, _ = self._tracker.update_progress(
+            np.array([x, y], dtype=float)
+        )
+        # Compute errors directly without calling tracker.errors() to avoid duplicate projection
+        n_hat = np.array([-t_hat[1], t_hat[0]])
+        e_lat = float(np.dot(np.array([x, y]) - q, n_hat))
+        ang_t = math.atan2(t_hat[1], t_hat[0])
+        e_head = _wrap_pi(ang_t - th)
+        ranges, min_lidar = self.lidar.sense(
+            self._grid_raw, (x, y, th), GRID_RESOLUTION_M, self._map_w_m, self._map_h_m
+        )
+        self._last_lidar_ranges = ranges
+        ii = int(np.clip(y / GRID_RESOLUTION_M, 0, self._grid_infl.shape[0] - 1))
+        jj = int(np.clip(x / GRID_RESOLUTION_M, 0, self._grid_infl.shape[1] - 1))
+        collision = bool(self._grid_infl[ii, jj])
+        oob = bool(x < 0.0 or y < 0.0 or x >= self._map_w_m or y >= self._map_h_m)
+        goal = self._tracker.goal_reached(
+            np.array([x, y], dtype=float), self._goal_xy, GOAL_TOLERANCE_M
+        )
+        self._steps += 1
+        timeout = bool(self._steps >= int(self.conf.dynamics.max_steps))
+        terminated = bool(collision or goal)
+        truncated = bool(timeout or oob)
+        dv = float(v_cmd - v_prev)
+        dw = float(w_cmd - w_prev)
+        rew = self._compute_reward(
+            ds,
+            e_lat,
+            e_head,
+            min_lidar,
+            dv,
+            dw,
+            terminated or truncated,
+            collision,
+            timeout,
+        )
+        obs = self._observe(lidar_data=(ranges, min_lidar), path_errors=(e_lat, e_head))
+        info = {
+            "progress": float(ds),
+            "s_ptr": float(s_ptr),
+            "e_lat": float(e_lat),
+            "e_head": float(e_head),
+            "min_lidar": float(min_lidar),
+            "collision": collision,
+            "goal": goal,
+            "timeout": timeout,
+        }
+        if self.render_mode == "human":
+            try:
+                self.render("human")
+            except Exception:
+                pass
+        return obs, float(rew), terminated, truncated, info
+
+    def render(self, mode: str = "human"):
+        if self._grid_raw is None or self._tracker is None:
             return None
+        if self._viewer is None:
+            try:
+                self._viewer = PygameViewer(self._map_w_m, self._map_h_m)
+            except Exception:
+                return None
+        x, y, th = self._pose()
+        previews = self._tracker.preview_points(
+            self.conf.preview.K, self.conf.preview.ds
+        )
+        ranges = self._last_lidar_ranges
+        if ranges is None:
+            ranges, _ = self.lidar.sense(
+                self._grid_raw,
+                (x, y, th),
+                GRID_RESOLUTION_M,
+                self._map_w_m,
+                self._map_h_m,
+            )
+        frame = self._viewer.draw(
+            self._grid_raw,
+            self._tracker.P,
+            previews,
+            (x, y, th),
+            ranges,
+            self.lidar.rel_angles,
+            self._goal_xy,
+            ROBOT_DIAMETER_M / 2.0,
+            capture=(mode == "rgb_array"),
+        )
+        if mode == "rgb_array":
+            return frame
+        return None
 
     def close(self):
-        """
-        Clean up rendering resources and close the environment.
-        """
-        # Close any open figure
-        if self._fig is not None:
+        if self._viewer is not None:
             try:
-                import matplotlib.pyplot as plt
-
-                plt.close(self._fig)
-            except ImportError:
+                self._viewer.close()
+            except Exception:
                 pass
-        self._fig, self._ax = None, None
-        # Close pygame window if any
-        if self._pg is not None:
-            try:
-                self._pg.close()
-            except (AttributeError, RuntimeError):
-                pass
-        self._pg = None
+            self._viewer = None
+        return None
 
-    def _get_obs(self) -> np.ndarray:
-        pose = self.robot.as_pose()
-        ranges, _ = self.lidar.cast(pose, self.grid)
-        rs = self.robot.get_state()
-        # path error and waypoints preview if available
-        if self.path_waypoints is not None and self.path_waypoints.shape[0] >= 2:
-            ct_err, hdg_err, preview = self._path_features(pose)
-            path_err = np.array([ct_err, hdg_err], dtype=float)
-            wp_preview = preview
-        else:
-            path_err = np.array([0.0, 0.0], dtype=float)
-            wp_preview = np.zeros((self.cfg.path_preview_count * 2,), dtype=float)
-        tnorm = np.array([self._step_count / max(1, self.max_steps)], dtype=float)
-        obs = np.concatenate(
-            [
-                ranges,
-                np.array([rs.v, rs.omega], dtype=float),
-                path_err,
-                wp_preview,
-                tnorm,
-            ]
-        )
-        return obs.astype(np.float32)
 
-    # -------- Grid accessors --------
-    @property
-    def collision_grid(self) -> BinaryOccupancyGrid:
-        """Configuration-space grid used for all collision/feasibility checks."""
-        return self._grid_cspace
-
-    @property
-    def sensing_grid(self) -> BinaryOccupancyGrid:
-        """Raw occupancy grid used for LiDAR sensing and rendering."""
-        return self.grid
-
-    @property
-    def grids(self) -> Grids:
-        """Bundle of sensing and C-space grids to enforce two-grid usage."""
-        return Grids(
-            sensing=self.grid,
-            cspace=self._grid_cspace,
-            edt=self._edt_m,
-            res=float(getattr(self.grid, "_cellsize", self.cfg.res)),
-        )
-
-    def _set_rect_obstacle(
-        self, x_min: float, y_min: float, x_max: float, y_max: float
-    ) -> None:
-        self.grid.set([x_min, y_min, x_max, y_max], True)
-
-    # ------- Collision helpers --------
-    def _build_cspace_grid(self) -> BinaryOccupancyGrid:
-        """
-        Build a configuration-space occupancy grid by dilating obstacles with
-        a circular structuring element of radius equal to the robot radius.
-        """
-        try:
-            # Build C-space via Euclidean Distance Transform (EDT) thresholding.
-            # Any cell with distance to nearest obstacle <= robot_radius treated occupied.
-            occ = self.grid.grid.astype(bool)
-            res = float(getattr(self.grid, "_cellsize", self.cfg.res))
-            if res <= 0:
-                res = self.cfg.res
-            # Distance in meters from free cells to nearest obstacle
-            # distance_transform_edt returns distance in pixels; multiply by res
-            free = ~occ
-            dist_px = ndi.distance_transform_edt(free)
-            dist_m = dist_px * res
-            self._edt_m = dist_m.astype(float)
-            # Threshold at robot radius (optionally add safety margin if needed)
-            r_eff = float(self.cfg.robot_radius)
-            cspace_occ = dist_m <= r_eff
-            return BinaryOccupancyGrid(cspace_occ, cellsize=res, origin=(0, 0))
-        except (AttributeError, ValueError, TypeError) as e:
-            # Fallback to original grid if dilation fails
-            print(f"Warning: C-space grid dilation failed: {e}. Using original grid.")
-            self._edt_m = None
-            return self.grid
-
-    def rebuild_cspace(self) -> None:
-        """Recompute EDT and C-space after updating the sensing grid."""
-        self._grid_cspace = self._build_cspace_grid()
-
-    def _check_dynamic_collisions(self, x: float, y: float) -> bool:
-        """Placeholder for dynamic obstacle collisions (circle-circle)."""
-        # TODO: Implement dynamic collision detection
-        # For now, no dynamic obstacles are present
-        _ = x, y  # Suppress unused parameter warnings
-        return False
-
-    # ------- Path helpers --------
-    def _nearest_path_index(self, x: float, y: float) -> int:
-        if self.path_waypoints is None or self.path_waypoints.shape[0] == 0:
-            raise ValueError("No path waypoints available")
-        wp = self.path_waypoints
-        d = np.hypot(wp[:, 0] - x, wp[:, 1] - y)
-        return int(np.argmin(d))
-
-    def _path_features(
-        self, pose: Tuple[float, float, float]
-    ) -> Tuple[float, float, np.ndarray]:
-        x, y, th = pose
-        idx = self._nearest_path_index(x, y)
-        wp = self.path_waypoints
-        # Ensure we have at least 2 waypoints for path following
-        if wp.shape[0] < 2:
-            return 0.0, 0.0, np.zeros((self.cfg.path_preview_count * 2,), dtype=float)
-
-        idx2 = min(idx + 1, wp.shape[0] - 1)
-        # If idx == idx2, we're at the last waypoint
-        if idx == idx2 and idx > 0:
-            idx2 = idx
-            idx = idx - 1
-
-        # cross-track: signed distance to segment normal
-        p = np.array([x, y])
-        a = wp[idx]
-        b = wp[idx2]
-        ab = b - a
-        ab_len = max(1e-9, np.linalg.norm(ab))
-        t = np.clip(np.dot(p - a, ab) / (ab_len**2), 0.0, 1.0)
-        proj = a + t * ab
-        # sign via left/right of segment
-        n = np.array([-ab[1], ab[0]]) / ab_len
-        ct_err = float(np.dot(p - proj, n))
-        path_heading = float(np.arctan2(ab[1], ab[0]))
-        hdg_err = float((path_heading - th + np.pi) % (2 * np.pi) - np.pi)
-        # waypoint preview: next 3 deltas
-        preview_pts = []
-        for k in range(1, self.cfg.path_preview_count + 1):
-            j = min(idx + k * self.cfg.path_preview_step, wp.shape[0] - 1)
-            dx, dy = wp[j, 0] - x, wp[j, 1] - y
-            preview_pts.extend([dx, dy])
-        return ct_err, hdg_err, np.array(preview_pts, dtype=float)
-
-    # ------- EDT helpers --------
-    @property
-    def edt_m(self) -> Optional[np.ndarray]:
-        """Euclidean distance (meters) to nearest obstacle for each cell, if available."""
-        return self._edt_m
-
-    def clearance_at(self, x: float, y: float) -> Optional[float]:
-        """Clearance (meters) = distance to nearest obstacle - robot radius, at (x,y)."""
-        if self._edt_m is None:
-            return None
-        try:
-            res = float(getattr(self.grid, "_cellsize", self.cfg.res))
-            gy = int(y / max(1e-9, res))
-            gx = int(x / max(1e-9, res))
-            H, W = self._edt_m.shape[:2]
-            if gy < 0 or gx < 0 or gy >= H or gx >= W:
-                return None
-            d = float(self._edt_m[gy, gx])
-            return d - float(self.cfg.robot_radius)
-        except Exception:
-            return None
+__all__ = ["UnicycleNavEnv"]

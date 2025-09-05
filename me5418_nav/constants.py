@@ -1,30 +1,32 @@
 from __future__ import annotations
 
-"""
-Centralized constants for environment, robot, LiDAR, and map defaults.
+# Core robot limits
+ROBOT_V_MIN_MPS: float = 0.0
+ROBOT_V_MAX_MPS: float = 1.5
+ROBOT_W_MIN_RPS: float = -2.0
+ROBOT_W_MAX_RPS: float = 2.0
 
-Only keep constants that are used across the codebase to avoid drift.
-"""
-
-# Environment / Map
-GRID_RESOLUTION_M = 0.05  # meters per cell (grid + EDT resolution)
-
-# Robot
-ROBOT_DIAMETER_M = 0.5
-ROBOT_RADIUS_M = ROBOT_DIAMETER_M / 2.0
-ROBOT_V_MAX_MPS = 1.5
-ROBOT_V_MIN_MPS = 0.0  # no backward by default; adjust if needed
-ROBOT_W_MAX_RPS = 2.0
-ROBOT_W_MIN_RPS = -2.0
-CONTROL_FREQ_HZ = 10.0
-DT_S = 1.0 / CONTROL_FREQ_HZ
-GOAL_RADIUS_M = 0.3
+# Geometry
+GRID_RESOLUTION_M: float = 0.05
+ROBOT_DIAMETER_M: float = 0.5
+ROBOT_SAFETY_MARGIN_M: float = 0.1
+ROBOT_COLLISION_RADIUS_M: float = (ROBOT_DIAMETER_M / 2.0) + ROBOT_SAFETY_MARGIN_M
 
 # LiDAR
-LIDAR_BEAMS = 24  # or 36
-LIDAR_FOV_DEG = 240.0
-LIDAR_RANGE_M = 4.0
-LIDAR_STEP_M = 0.02  # ray marching step
+LIDAR_NUM_BEAMS: int = 24
+LIDAR_FOV_DEG: float = 240.0
+LIDAR_MAX_RANGE_M: float = 4.0
 
-# Episode / Evaluation
-EPISODE_TIME_S = 120.0
+# Episode
+GOAL_TOLERANCE_M: float = 0.3
+DT: float = 0.1
+EPISODE_MAX_STEPS: int = 400
+
+# Path preview
+PATH_PREVIEW_K: int = 5
+PATH_PREVIEW_DS: float = 0.6
+PATH_PREVIEW_RANGE_M: float = 3.0
+
+# Clearance shaping
+CLEARANCE_SAFE_M: float = 0.5
+
