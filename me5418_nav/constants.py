@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 # Core robot limits
-ROBOT_V_MIN_MPS: float = 0.0
+# Allow limited reverse motion for disentangling behaviors
+ROBOT_V_MIN_MPS: float = -0.6
 ROBOT_V_MAX_MPS: float = 1.5
 ROBOT_W_MIN_RPS: float = -2.0
 ROBOT_W_MAX_RPS: float = 2.0

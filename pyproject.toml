@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "me5418-nav"
+version = "0.1.0"
+description = "ME5418 mobile robot navigation project"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "ME5418 Team" }
+]
+
+[tool.setuptools.packages.find]
+include = ["me5418_nav*"]

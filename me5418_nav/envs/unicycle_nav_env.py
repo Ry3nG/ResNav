@@ -12,6 +12,7 @@ from me5418_nav.constants import (
     ROBOT_DIAMETER_M,
     ROBOT_COLLISION_RADIUS_M,
     GOAL_TOLERANCE_M,
+    ROBOT_V_MIN_MPS,
 )
 from me5418_nav.navigation.path_tracker import PathTracker
 from me5418_nav.sensors.lidar import Lidar
@@ -25,6 +26,7 @@ from me5418_nav.observation import Observation
 from me5418_nav.config import CurriculumManager
 from scipy.ndimage import binary_dilation
 from me5418_nav.utils.connectivity import reachable_inflated
+from me5418_nav.rewards import build_reward
 
 
 def _wrap_pi(a: float) -> float:
@@ -76,7 +78,17 @@ class UnicycleNavEnv(gym.Env):
         self._last_v = 0.0
         self._last_w = 0.0
         self._last_lidar_ranges = None
-        self._reward_weights = self.conf.reward
+        # Build reward implementation from config dict (select by name if provided)
+        rparams = dict(self.conf.reward or {})
+        rname = str(rparams.pop("name", rparams.pop("impl", "v1")))
+        self._reward = build_reward(
+            name=rname,
+            params=rparams,
+            dt=self.dt,
+            v_max=self.v_max,
+            w_max=self.w_max,
+            lidar_max_range=self.lidar.max_range,
+        )
         self._viewer: Optional[PygameViewer] = None
 
         # Curriculum learning system
@@ -136,7 +148,8 @@ class UnicycleNavEnv(gym.Env):
         rel_robot = np.clip(rel_robot / self.conf.preview.range_m, -1.0, 1.0)
         v = self._veh.get_state().v
         w = self._veh.get_state().omega
-        v_n = float(np.clip(v / self.v_max, 0.0, 1.0))
+        # Allow symmetric normalization to reflect limited reverse capability
+        v_n = float(np.clip(v / self.v_max, -1.0, 1.0))
         w_n = float(np.clip(w / self.w_max, -1.0, 1.0))
         obs_struct = Observation(
             lidar=lidar_norm,
@@ -146,35 +159,7 @@ class UnicycleNavEnv(gym.Env):
         )
         return obs_struct.flatten()
 
-    def _compute_reward(
-        self,
-        ds: float,
-        e_lat: float,
-        e_head: float,
-        min_lidar: float,
-        dv: float,
-        dw: float,
-        terminated: bool,
-        truncated: bool,
-        collision: bool,
-        timeout: bool,
-    ) -> float:
-        w = self._reward_weights
-        r = 0.0
-        r += w.w_prog * max(0.0, ds)
-        r -= w.w_lat * abs(e_lat)
-        r -= w.w_head * abs(e_head)
-        r -= w.w_clear * math.exp(-max(0.0, min_lidar) / w.clearance_safe_m)
-        r -= w.w_dv * abs(dv)
-        r -= w.w_dw * abs(dw)
-        # Terminal handling: prioritize failure cases, never reward on truncation
-        if collision:
-            r -= w.R_collide
-        elif timeout or truncated:
-            r -= w.R_timeout
-        elif terminated:
-            r += w.R_goal
-        return float(r)
+    # Reward logic is delegated to me5418_nav.rewards; no local reward function.
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None):
         super().reset(seed=seed)
@@ -240,7 +225,8 @@ class UnicycleNavEnv(gym.Env):
         a = np.asarray(action, dtype=float)
         a_v = float(np.clip(a[0], -1.0, 1.0))
         a_w = float(np.clip(a[1], -1.0, 1.0))
-        v_cmd = 0.5 * (a_v + 1.0) * self.v_max
+        # Allow limited reverse: clamp by global min speed from constants
+        v_cmd = float(np.clip(a_v * self.v_max, ROBOT_V_MIN_MPS, self.v_max))
         w_cmd = a_w * self.w_max
         v_prev = self._veh.get_state().v
         w_prev = self._veh.get_state().omega
@@ -269,19 +255,22 @@ class UnicycleNavEnv(gym.Env):
         timeout = bool(self._steps >= int(self.conf.dynamics.max_steps))
         terminated = bool(collision or goal)
         truncated = bool(timeout or oob)
-        dv = float(v_cmd - v_prev)
-        dw = float(w_cmd - w_prev)
-        rew = self._compute_reward(
-            ds,
-            e_lat,
-            e_head,
-            min_lidar,
-            dv,
-            dw,
-            terminated,
-            truncated,
-            collision,
-            timeout,
+        # Delegate reward computation
+        rew, dbg = self._reward.compute(
+            ds=ds,
+            v_cmd=v_cmd,
+            w_cmd=w_cmd,
+            v_prev=v_prev,
+            w_prev=w_prev,
+            ranges=ranges,
+            angles=self.lidar.rel_angles,
+            min_lidar=min_lidar,
+            e_lat=e_lat,
+            e_head=e_head,
+            goal=goal,
+            collision=collision,
+            timeout=timeout,
+            truncated=truncated,
         )
         obs = self._observe(lidar_data=(ranges, min_lidar), path_errors=(e_lat, e_head))
         info = {
@@ -290,6 +279,7 @@ class UnicycleNavEnv(gym.Env):
             "e_lat": float(e_lat),
             "e_head": float(e_head),
             "min_lidar": float(min_lidar),
+            **{k: float(v) for k, v in (dbg or {}).items()},
             "collision": collision,
             "goal": goal,
             "timeout": timeout,

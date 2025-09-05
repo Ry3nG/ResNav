@@ -19,6 +19,7 @@ git clone <repository-url>
 cd ME5418-Project
 conda env create -f environment.yml
 conda activate me5418-nav
+python -m pip install -e .
 ```
 
 ### Train a Policy
@@ -49,17 +50,23 @@ python scripts/eval.py \
   - **Preview** `(K,2)`: future waypoints in robot frame (clipped and normalized)
 
 ### Action Space (2-dim)
-- **Linear velocity**: v ∈ [0, 1.5] m/s (mapped from [-1,1])
+- **Linear velocity**: v ∈ [-0.6, 1.5] m/s (tanh-squashed to [-1,1] then clamped)
 - **Angular velocity**: ω ∈ [-2, 2] rad/s (direct mapping)
 
 ### Reward Function
 ```python
-reward = w_prog * progress +
-         - w_lat * |lateral_error| +
-         - w_head * |heading_error| +
-         - w_clear * exp(-min_lidar_dist/safe_dist) +
-         - w_smoothness * |velocity_changes| +
-         + terminal_rewards
+# Directional shaping encourages early, decisive detours:
+# - r_turn: steer toward the freer side (from LiDAR L/R sector imbalance)
+# - r_fwd: only favor straight motion when forward sector is freer than sides
+# - r_gap: weak centering when passing through a gap (optional)
+# - r_brake: penalize forward speed if forward sector is constrained
+reward = (
+    w_prog * progress
+    + r_turn + r_fwd + r_gap + r_brake
+    - w_dv * |Δv| - w_dw * |Δω|
+    - w_step * dt
+    + terminal_rewards  # +R_goal, -R_collide, -R_timeout
+)
 ```
 
 ## Programmatic Usage
@@ -82,16 +89,21 @@ for step in range(1000):
 ### Custom Configuration
 
 ```python
-from me5418_nav.config import EnvConfig, RewardConfig, LidarConfig, PathPreviewConfig
+from me5418_nav.config import EnvConfig, LidarConfig, PathPreviewConfig
 from me5418_nav.envs import UnicycleNavEnv
 
 # Create custom config
 config = EnvConfig(
-    reward=RewardConfig(w_prog=1.5, w_lat=0.1, clearance_safe_m=0.5),
+    reward={
+        "name": "v1",  # reward implementation to use (default 'v1' if omitted)
+        "w_prog": 1.0, "w_turn": 0.35, "w_fwd": 0.25, "w_gap": 0.10,
+        "w_brake": 0.20, "w_step": 0.25, "w_dv": 0.02, "w_dw": 0.02,
+        "R_goal": 50.0, "R_collide": 120.0, "R_timeout": 15.0,
+    },
     lidar=LidarConfig(beams=36, fov_deg=270, max_range_m=4.0),
     preview=PathPreviewConfig(K=5, ds=0.6, range_m=3.0),
     scenario="blockage",
-    scenario_kwargs={"num_pallets": 2}  # or drive via curriculum (see YAML)
+    scenario_kwargs={"num_pallets": 2}
 )
 
 env = UnicycleNavEnv(config)
@@ -122,16 +134,18 @@ env:
   scenario_kwargs:
     num_pallets: 1
   reward:
+    name: v1  # optional, defaults to 'v1'
     w_prog: 1.0
-    w_lat: 0.2
-    w_head: 0.1
-    w_clear: 0.4
-    w_dv: 0.05
+    w_turn: 0.35
+    w_fwd: 0.25
+    w_gap: 0.10
+    w_brake: 0.20
+    w_step: 0.25
+    w_dv: 0.02
     w_dw: 0.02
     R_goal: 50.0
-    R_collide: 50.0
-    R_timeout: 10.0
-    clearance_safe_m: 0.5
+    R_collide: 120.0
+    R_timeout: 15.0
   lidar:
     beams: 24
     fov_deg: 240

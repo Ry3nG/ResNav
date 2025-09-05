@@ -18,27 +18,12 @@ from .constants import (
     PATH_PREVIEW_RANGE_M,
 )
 
+"""Environment configuration types.
 
-@dataclass
-class RewardConfig:
-    w_prog: float = 1.0
-    w_lat: float = 0.2
-    w_head: float = 0.1
-    w_clear: float = 0.4
-    w_dv: float = 0.05
-    w_dw: float = 0.02
-    R_goal: float = 50.0
-    R_collide: float = 50.0
-    R_timeout: float = 10.0
-    clearance_safe_m: float = 0.5
-
-    def __post_init__(self) -> None:
-        assert self.w_prog > 0.0, "w_prog must be positive"
-        for name in ("w_lat", "w_head", "w_clear", "w_dv", "w_dw"):
-            assert getattr(self, name) >= 0.0, f"{name} must be >= 0"
-        for name in ("R_goal", "R_collide", "R_timeout"):
-            assert getattr(self, name) >= 0.0, f"{name} must be >= 0"
-        assert self.clearance_safe_m > 0.0, "clearance_safe_m must be > 0"
+Reward parameters are kept as a plain dictionary under EnvConfig and resolved
+at runtime by me5418_nav.rewards. This keeps reward implementations pluggable
+and version-agnostic (select by name in the dict if desired).
+"""
 
 
 @dataclass
@@ -147,7 +132,7 @@ class CurriculumManager:
 
 @dataclass
 class EnvConfig:
-    reward: RewardConfig = field(default_factory=RewardConfig)
+    reward: Dict[str, Any] = field(default_factory=dict)
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
     lidar: LidarConfig = field(default_factory=LidarConfig)
     preview: PathPreviewConfig = field(default_factory=PathPreviewConfig)
@@ -182,7 +167,7 @@ class EnvConfig:
                 ))
         
         env = cls(
-            reward=RewardConfig(**reward),
+            reward=dict(reward) if isinstance(reward, dict) else {},
             dynamics=DynamicsConfig(**dynamics),
             lidar=LidarConfig(**lidar_cfg),
             preview=PathPreviewConfig(**preview_cfg),
@@ -195,4 +180,3 @@ class EnvConfig:
             scenario_kwargs=dict(d.get("scenario_kwargs", {})),
         )
         return env
-

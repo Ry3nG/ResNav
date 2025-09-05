@@ -25,7 +25,7 @@ class BlockageScenarioConfig:
     goal_margin_x_m: float = 1.0
     waypoint_step_m: float = 0.3
     resolution_m: float = GRID_RESOLUTION_M
-    min_passage_m: float = ROBOT_DIAMETER_M + 0.1
+    min_passage_m: float = ROBOT_DIAMETER_M + 0.2
     num_pallets_min: int = 1
     num_pallets_max: int = 1
 
@@ -57,18 +57,8 @@ def create_blockage_scenario(
     grid = np.zeros((grid_h, grid_w), dtype=bool)
     r = rng or np.random.default_rng()
     corridor_w = float(r.uniform(c.corridor_width_min_m, c.corridor_width_max_m))
-    # Ensure corridor/pallet satisfy inflated clearance requirement; shrink pallet if needed
-    required_clearance = 2.0 * float(ROBOT_COLLISION_RADIUS_M)
+    # Use configured pallet width as the global upper bound; single-side passage will be enforced per pallet
     pallet_w_eff = float(c.pallet_width_m)
-    min_corridor_needed = pallet_w_eff + 2.0 * required_clearance
-    if corridor_w < min_corridor_needed:
-        # Try to enlarge corridor within its max bound
-        corridor_w = min(
-            float(c.corridor_width_max_m), float(min_corridor_needed) + 1e-3
-        )
-        # If still insufficient, reduce pallet width locally (not modifying config)
-        if corridor_w < min_corridor_needed:
-            pallet_w_eff = max(0.2, corridor_w - 2.0 * required_clearance)
     cy = c.map_height_m / 2.0
     y_top = cy + corridor_w / 2.0
     y_bot = cy - corridor_w / 2.0
@@ -97,21 +87,37 @@ def create_blockage_scenario(
     # Generate random number of pallets within configured range
     num_pallets = int(r.integers(c.num_pallets_min, c.num_pallets_max + 1))
     for _ in range(num_pallets):
-        # Per-pallet size variance (never exceed scene-level pallet_w_eff to keep clearance guarantee)
+        # Per-pallet size variance (never exceed scene-level pallet_w_eff)
+        # Enforce single-side minimum passage: pallet width must leave at least T on one side
+        T = float(c.min_passage_m)
+        eps = 1e-3
         w_min = max(0.2, 0.4 * pallet_w_eff)
-        w_i = float(r.uniform(w_min, pallet_w_eff))
+        w_max_geom = max(0.0, corridor_w - T - eps)
+        w_cap = max(w_min, min(pallet_w_eff, w_max_geom))
+        # If geometry disallows the desired lower bound, clamp to a tiny feasible width to let reachability reject if needed
+        if w_cap <= 0.0:
+            w_i = 0.2
+        else:
+            w_i = float(r.uniform(w_min, w_cap))
         l_min = max(0.3, 0.5 * c.pallet_length_m)
         l_i = float(r.uniform(l_min, c.pallet_length_m))
 
-        # Side offset respecting inflated clearance for this pallet width
-        base_i = max(0.0, (corridor_w - w_i) / 2.0)
-        max_offset_allow = max(0.0, base_i - required_clearance)
-        if max_offset_allow <= 0.0:
-            off = 0.0
+        # Choose which wall to bias toward (top or bottom) and sample center so that the other side keeps >= T
+        toward_top = bool(r.random() < 0.5)
+        if toward_top:
+            # Keep bottom side passage >= T, and do not exceed top wall
+            y_lo = float(y_bot + T + w_i / 2.0)
+            y_hi = float(y_top - w_i / 2.0)
         else:
-            mag = float(r.uniform(0.0, max_offset_allow))
-            off = mag if r.random() < 0.5 else -mag
-        y_center = cy + off
+            # Keep top side passage >= T, and do not exceed bottom wall
+            y_lo = float(y_bot + w_i / 2.0)
+            y_hi = float(y_top - T - w_i / 2.0)
+        # If invalid due to extreme geometry, fall back to clamping within walls (reachability will filter globally)
+        if y_hi < y_lo:
+            mid = 0.5 * (y_bot + y_top)
+            y_center = float(np.clip(mid, y_bot + w_i / 2.0, y_top - w_i / 2.0))
+        else:
+            y_center = float(r.uniform(y_lo, y_hi))
 
         # Longitudinal position with wider variance across the corridor length
         if x_hi > x_lo:
