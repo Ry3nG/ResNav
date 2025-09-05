@@ -9,7 +9,7 @@ ROBOT_W_MAX_RPS: float = 2.0
 # Geometry
 GRID_RESOLUTION_M: float = 0.05
 ROBOT_DIAMETER_M: float = 0.5
-ROBOT_SAFETY_MARGIN_M: float = 0.1
+ROBOT_SAFETY_MARGIN_M: float = 0.0
 ROBOT_COLLISION_RADIUS_M: float = (ROBOT_DIAMETER_M / 2.0) + ROBOT_SAFETY_MARGIN_M
 
 # LiDAR
@@ -29,4 +29,3 @@ PATH_PREVIEW_RANGE_M: float = 3.0
 
 # Clearance shaping
 CLEARANCE_SAFE_M: float = 0.5
-

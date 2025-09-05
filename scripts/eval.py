@@ -4,7 +4,7 @@ import argparse
 import os
 import json
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 from stable_baselines3 import PPO
@@ -13,8 +13,19 @@ from me5418_nav.envs import UnicycleNavEnv
 from me5418_nav.constants import DT
 
 
-def record_episode(env: UnicycleNavEnv, model: PPO, out_path: str, fps: int = 12, stride: int = 2, scale: float = 1.0, scenario_kwargs: Dict[str, Any] | None = None) -> None:
-    obs, info = env.reset(options={"scenario": "blockage", "kwargs": (scenario_kwargs or {})})
+def record_episode(
+    env: UnicycleNavEnv,
+    model: PPO,
+    out_path: str,
+    fps: int = 12,
+    stride: int = 2,
+    scale: float = 1.0,
+    scenario_kwargs: Dict[str, Any] | None = None,
+    seed: Optional[int] = None,
+) -> None:
+    obs, info = env.reset(
+        seed=seed, options={"scenario": "blockage", "kwargs": (scenario_kwargs or {})}
+    )
     frames: list[np.ndarray] = []
     t = 0
     done = False
@@ -27,8 +38,13 @@ def record_episode(env: UnicycleNavEnv, model: PPO, out_path: str, fps: int = 12
                 if scale and scale != 1.0:
                     try:
                         import cv2  # type: ignore
+
                         h, w = frame.shape[:2]
-                        frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+                        frame = cv2.resize(
+                            frame,
+                            (int(w * scale), int(h * scale)),
+                            interpolation=cv2.INTER_AREA,
+                        )
                     except Exception:
                         pass
                 frames.append(frame)
@@ -41,32 +57,67 @@ def record_episode(env: UnicycleNavEnv, model: PPO, out_path: str, fps: int = 12
         return
     try:
         import imageio.v2 as imageio  # type: ignore
+
         imageio.mimsave(out_path, frames, fps=max(1, int(fps)))
-        print(f"[INFO] Saved GIF via imageio: {out_path}")
+        print(f"[INFO] Saved GIF via imageio: {out_path} (seed={seed})")
         return
     except Exception:
         pass
     try:
         from PIL import Image  # type: ignore
+
         duration_ms = int(1000.0 / max(1, int(fps)))
         pil_frames = [Image.fromarray(f) for f in frames]
-        pil_frames[0].save(out_path, save_all=True, append_images=pil_frames[1:], optimize=False, duration=duration_ms, loop=0)
-        print(f"[INFO] Saved GIF via PIL: {out_path}")
+        pil_frames[0].save(
+            out_path,
+            save_all=True,
+            append_images=pil_frames[1:],
+            optimize=False,
+            duration=duration_ms,
+            loop=0,
+        )
+        print(f"[INFO] Saved GIF via PIL: {out_path} (seed={seed})")
     except Exception:
         print("[WARN] Unable to save GIF (imageio and PIL not available).")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate PPO model and optionally record a GIF")
-    parser.add_argument("--model", type=str, required=True, help="Path to model zip (best_model.zip or final_model.zip)")
-    parser.add_argument("--episodes", type=int, default=50, help="Number of evaluation episodes")
+    parser = argparse.ArgumentParser(
+        description="Evaluate PPO model and optionally record a GIF"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        required=True,
+        help="Path to model zip (best_model.zip or final_model.zip)",
+    )
+    parser.add_argument(
+        "--episodes", type=int, default=50, help="Number of evaluation episodes"
+    )
     parser.add_argument("--seed", type=int, default=123, help="Evaluation random seed")
-    parser.add_argument("--num-pallets", type=int, default=1, help="Blockage scenario pallets")
-    parser.add_argument("--gif", type=str, default=None, help="Output GIF path (records a best/typical episode)")
+    parser.add_argument(
+        "--num-pallets", type=int, default=1, help="Blockage scenario pallets"
+    )
+    parser.add_argument(
+        "--gif",
+        type=str,
+        default=None,
+        help="Output GIF path (records a best/typical episode)",
+    )
     parser.add_argument("--gif-fps", type=int, default=12)
     parser.add_argument("--gif-stride", type=int, default=2)
     parser.add_argument("--gif-scale", type=float, default=1.0)
-    parser.add_argument("--show", action="store_true", help="Display evaluation window (default: headless)")
+    parser.add_argument(
+        "--counts",
+        type=int,
+        default=0,
+        help="Number of distinct layout GIFs to generate (max 10)",
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Display evaluation window (default: headless)",
+    )
     args = parser.parse_args()
 
     # Build env with appropriate rendering mode
@@ -84,7 +135,12 @@ def main():
     total_steps = 0
 
     for ep in range(int(args.episodes)):
-        obs, info = env.reset(options={"scenario": "blockage", "kwargs": {"num_pallets": int(args.num_pallets)}})
+        obs, info = env.reset(
+            options={
+                "scenario": "blockage",
+                "kwargs": {"num_pallets": int(args.num_pallets)},
+            }
+        )
         steps = 0
         goal = False
         collision = False
@@ -105,15 +161,17 @@ def main():
         collisions += int(collision)
         timeouts += int(timeout and not goal and not collision)
         total_steps += steps
-        results.append({
-            "episode": ep,
-            "steps": steps,
-            "time_s": steps * DT,
-            "goal": goal,
-            "collision": collision,
-            "timeout": timeout,
-            "s_ptr": s_end,
-        })
+        results.append(
+            {
+                "episode": ep,
+                "steps": steps,
+                "time_s": steps * DT,
+                "goal": goal,
+                "collision": collision,
+                "timeout": timeout,
+                "s_ptr": s_end,
+            }
+        )
 
     # Summary
     succ_rate = success / len(results) if results else 0.0
@@ -130,18 +188,80 @@ def main():
     outdir = os.path.join("runs", "eval", datetime.now().strftime("%Y%m%d_%H%M%S"))
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "metrics.json"), "w") as f:
-        json.dump({
-            "episodes": len(results),
-            "success_rate": succ_rate,
-            "collision_rate": coll_rate,
-            "timeout_rate": timeout_rate,
-            "mean_time_s": float(mean_time),
-            "details": results,
-        }, f, indent=2)
+        json.dump(
+            {
+                "episodes": len(results),
+                "success_rate": succ_rate,
+                "collision_rate": coll_rate,
+                "timeout_rate": timeout_rate,
+                "mean_time_s": float(mean_time),
+                "details": results,
+            },
+            f,
+            indent=2,
+        )
 
-    # Optional GIF: re-run a best/typical episode
-    if args.gif:
-        # pick best: among successes, minimal time; else shortest time overall
+    # GIF generation
+    # If counts > 0, generate up to N unique-seed GIFs into the timestamped outdir
+    if int(args.counts) > 0:
+        try:
+            import secrets  # type: ignore
+        except Exception:
+            secrets = None  # type: ignore
+        N_req = int(args.counts)
+        if N_req > 10:
+            print(f"[WARN] --counts capped at 10 (requested {N_req})")
+        N = min(10, max(0, N_req))
+        seeds: list[int] = []
+        seen: set[int] = set()
+        while len(seeds) < N:
+            if secrets is not None:
+                s = int(secrets.randbits(32))
+            else:
+                s = int(np.random.randint(0, 2**32 - 1))
+            if s not in seen:
+                seen.add(s)
+                seeds.append(s)
+        print(f"[EVAL] Generating {N} GIFs in {outdir}")
+        print(f"[EVAL] Seeds: {seeds}")
+        gif_records = []
+        for s in seeds:
+            out_gif = os.path.join(outdir, f"seed_{s}.gif")
+            try:
+                record_episode(
+                    env,
+                    model,
+                    out_gif,
+                    fps=int(args.gif_fps),
+                    stride=int(args.gif_stride),
+                    scale=float(args.gif_scale),
+                    scenario_kwargs={"num_pallets": int(args.num_pallets)},
+                    seed=int(s),
+                )
+                gif_records.append(
+                    {
+                        "seed": int(s),
+                        "file": os.path.basename(out_gif),
+                        "fps": int(args.gif_fps),
+                        "stride": int(args.gif_stride),
+                        "scale": float(args.gif_scale),
+                    }
+                )
+            except Exception as e:
+                print(f"[WARN] Failed to generate GIF for seed {s}: {e}")
+        seeds_manifest = {
+            "counts": len(gif_records),
+            "seeds": [int(r["seed"]) for r in gif_records],
+            "gifs": gif_records,
+            "scenario": "blockage",
+            "scenario_kwargs": {"num_pallets": int(args.num_pallets)},
+            "note": "Each GIF layout is determined solely by its seed",
+        }
+        with open(os.path.join(outdir, "seeds.json"), "w") as f:
+            json.dump(seeds_manifest, f, indent=2)
+        print(f"[EVAL] Wrote seeds.json")
+    elif args.gif:
+        # Single GIF: pick best/typical and record one run
         chosen = None
         succs = [r for r in results if r["goal"]]
         if succs:
@@ -149,7 +269,15 @@ def main():
         else:
             chosen = sorted(results, key=lambda r: r["time_s"])[:1][0]
         print(f"[EVAL] Recording GIF for episode template: {chosen}")
-        record_episode(env, model, args.gif, fps=args.gif_fps, stride=args.gif_stride, scale=args.gif_scale, scenario_kwargs={"num_pallets": int(args.num_pallets)})
+        record_episode(
+            env,
+            model,
+            args.gif,
+            fps=args.gif_fps,
+            stride=args.gif_stride,
+            scale=args.gif_scale,
+            scenario_kwargs={"num_pallets": int(args.num_pallets)},
+        )
 
     env.close()
 

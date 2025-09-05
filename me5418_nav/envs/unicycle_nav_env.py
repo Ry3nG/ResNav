@@ -24,6 +24,7 @@ from me5418_nav.config import EnvConfig
 from me5418_nav.observation import Observation
 from me5418_nav.config import CurriculumManager
 from scipy.ndimage import binary_dilation
+from me5418_nav.utils.connectivity import reachable_inflated
 
 
 def _wrap_pi(a: float) -> float:
@@ -77,9 +78,13 @@ class UnicycleNavEnv(gym.Env):
         self._last_lidar_ranges = None
         self._reward_weights = self.conf.reward
         self._viewer: Optional[PygameViewer] = None
-        
+
         # Curriculum learning system
-        self._curriculum = CurriculumManager(self.conf.curriculum) if self.conf.curriculum.enabled else None
+        self._curriculum = (
+            CurriculumManager(self.conf.curriculum)
+            if self.conf.curriculum.enabled
+            else None
+        )
         self._episode_count = 0
 
     def _inflate_grid(self, grid: np.ndarray) -> np.ndarray:
@@ -91,18 +96,26 @@ class UnicycleNavEnv(gym.Env):
         s = self._veh.get_state()
         return float(s.x), float(s.y), float(s.theta)
 
-    def _observe(self, lidar_data: Optional[Tuple[np.ndarray, float]] = None, path_errors: Optional[Tuple[float, float]] = None) -> np.ndarray:
+    def _observe(
+        self,
+        lidar_data: Optional[Tuple[np.ndarray, float]] = None,
+        path_errors: Optional[Tuple[float, float]] = None,
+    ) -> np.ndarray:
         x, y, th = self._pose()
-        
+
         # Use provided LiDAR data if available, otherwise compute fresh
         if lidar_data is not None:
             ranges, _ = lidar_data
         else:
             ranges, _ = self.lidar.sense(
-                self._grid_raw, (x, y, th), GRID_RESOLUTION_M, self._map_w_m, self._map_h_m
+                self._grid_raw,
+                (x, y, th),
+                GRID_RESOLUTION_M,
+                self._map_w_m,
+                self._map_h_m,
             )
         lidar_norm = np.clip(ranges / self.conf.lidar.max_range_m, 0.0, 1.0)
-        
+
         # Use provided path errors if available, otherwise compute fresh
         if path_errors is not None:
             e_lat, e_head = path_errors
@@ -116,8 +129,10 @@ class UnicycleNavEnv(gym.Env):
         rel = previews - np.array([x, y])[None, :]
         c = math.cos(th)
         s = math.sin(th)
-        rot = np.array([[c, -s], [s, c]])
-        rel_robot = rel @ rot
+        # Transform world->robot for row-vectors: use R(-theta)^T = [[c, -s], [s, c]]
+        # This makes +y in robot frame point to the robot's left, consistent with e_lat sign.
+        rot_T = np.array([[c, -s], [s, c]])
+        rel_robot = rel @ rot_T
         rel_robot = np.clip(rel_robot / self.conf.preview.range_m, -1.0, 1.0)
         v = self._veh.get_state().v
         w = self._veh.get_state().omega
@@ -140,6 +155,7 @@ class UnicycleNavEnv(gym.Env):
         dv: float,
         dw: float,
         terminated: bool,
+        truncated: bool,
         collision: bool,
         timeout: bool,
     ) -> float:
@@ -151,13 +167,13 @@ class UnicycleNavEnv(gym.Env):
         r -= w.w_clear * math.exp(-max(0.0, min_lidar) / w.clearance_safe_m)
         r -= w.w_dv * abs(dv)
         r -= w.w_dw * abs(dw)
-        if terminated:
-            if collision:
-                r -= w.R_collide
-            elif timeout:
-                r -= w.R_timeout
-            else:
-                r += w.R_goal
+        # Terminal handling: prioritize failure cases, never reward on truncation
+        if collision:
+            r -= w.R_collide
+        elif timeout or truncated:
+            r -= w.R_timeout
+        elif terminated:
+            r += w.R_goal
         return float(r)
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None):
@@ -165,28 +181,41 @@ class UnicycleNavEnv(gym.Env):
         rng = np.random.default_rng(seed)
         scenario = (options or {}).get("scenario", self._default_scenario)
         kwargs = (options or {}).get("kwargs", self._default_scenario_kwargs)
-        
+
         # Apply curriculum learning if enabled
         if self._curriculum:
             stage = self._curriculum.get_stage_config(self._episode_count)
             # Check if stage changed for logging
             if self._curriculum.should_update_stage(self._episode_count):
-                print(f"[CURRICULUM] Episode {self._episode_count}: {self._curriculum.get_stage_name(self._episode_count)}")
+                print(
+                    f"[CURRICULUM] Episode {self._episode_count}: {self._curriculum.get_stage_name(self._episode_count)}"
+                )
             # Create curriculum-controlled configuration
             cfg = BlockageScenarioConfig.from_curriculum_stage(stage)
         else:
             # Use static configuration with single pallet count
             num_pallets = int(kwargs.get("num_pallets", 1))
-            cfg = BlockageScenarioConfig(num_pallets_min=num_pallets, num_pallets_max=num_pallets)
-        
-        if scenario == "blockage":
-            grid, waypoints, start_pose, goal_xy, info = create_blockage_scenario(
-                cfg, rng
+            cfg = BlockageScenarioConfig(
+                num_pallets_min=num_pallets, num_pallets_max=num_pallets
             )
-        else:
-            raise ValueError("unknown scenario")
+
+        resample_count = 0
+        while True:
+            if scenario == "blockage":
+                grid, waypoints, start_pose, goal_xy, info = create_blockage_scenario(
+                    cfg, rng
+                )
+            else:
+                raise ValueError("unknown scenario")
+            grid_infl = self._inflate_grid(grid)
+            start_xy = (float(start_pose[0]), float(start_pose[1]))
+            ok = reachable_inflated(grid_infl, start_xy, goal_xy, GRID_RESOLUTION_M)
+            if ok:
+                break
+            resample_count += 1
+
         self._grid_raw = grid
-        self._grid_infl = self._inflate_grid(grid)
+        self._grid_infl = grid_infl
         self._map_h_m = grid.shape[0] * GRID_RESOLUTION_M
         self._map_w_m = grid.shape[1] * GRID_RESOLUTION_M
         self._goal_xy = goal_xy
@@ -199,12 +228,12 @@ class UnicycleNavEnv(gym.Env):
         self._last_w = 0.0
         self._last_lidar_ranges = None
         self._viewer = None
-        
+
         # Increment episode count for curriculum learning
         self._episode_count += 1
-        
+
         obs = self._observe()
-        info_out = {"scenario": scenario, **info}
+        info_out = {"scenario": scenario, "resample_count": int(resample_count), **info}
         return obs, info_out
 
     def step(self, action: np.ndarray):
@@ -249,7 +278,8 @@ class UnicycleNavEnv(gym.Env):
             min_lidar,
             dv,
             dw,
-            terminated or truncated,
+            terminated,
+            truncated,
             collision,
             timeout,
         )
@@ -300,7 +330,8 @@ class UnicycleNavEnv(gym.Env):
             ranges,
             self.lidar.rel_angles,
             self._goal_xy,
-            ROBOT_DIAMETER_M / 2.0,
+            # Draw using the effective collision radius (includes safety margin)
+            ROBOT_COLLISION_RADIUS_M,
             capture=(mode == "rgb_array"),
         )
         if mode == "rgb_array":
