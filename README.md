@@ -7,6 +7,7 @@ Residual policy + conventional tracker for AMR local navigation in a 2D factory 
 - **Fast 2D simulator**: unicycle dynamics, occupancy grid, DDA LiDAR (24 beams, 240°)
 - **Phase I scenarios**: temporary blockage in narrow corridors (domain randomization)
 - **Benchmarks and visualizations**: rollout renderer (Pygame), CSV summaries, videos
+- **Reward HUD & logging**: in-render breakdown (total + per-term) and default logging to TB/WandB
 - **Reproducibility**: Hydra configs, VecNormalize stats saved, seeds per env
 
 ## Quickstart
@@ -109,12 +110,22 @@ make benchmark-ppo MODEL=runs/TIMESTAMP/best/best_model.zip VECNORM=runs/TIMESTA
 ### Technical Details
 - **LiDAR**: DDA raycasting on raw occupancy; collision uses inflated grid
 - **DWA**: lattice forward-sim (2s), obstacle-safe cost, path dead-zone, speed bias
+- **Reward breakdown**: Modular reward in `amr_env/reward.py`. Env exposes a stable schema used by HUD and logs:
+  - `raw`: `{progress, path, effort, sparse}` (unweighted)
+  - `weights`: `{progress, path, effort, sparse}` (from config)
+  - `contrib`: weighted terms with keys matching `weights`
+  - `total`: scalar sum; `version`: schema tag (e.g., `rwd_v1`)
+  - Exposed in `info["reward_terms"]` at terminal steps and in render payload
 
 ## Tips & Troubleshooting
 
 - **Model management**: Use `make list-models` for copy-paste ready commands
 - **VecNormalize**: Playback requires matching stats from training
 - **Renderer**: Shows raw meters/radians (not normalized) for geometry overlays
+- **Reward logs**: Reward breakdown logs to TensorBoard (and WandB when enabled) by default at terminal steps. See `docs/USAGE.md` for schema.
+# Reward HUD
+- During rendering/recording, the HUD shows `R_total` and per-term contributions `R_<name>` (e.g., `R_progress`, `R_path`, `R_effort`, `R_sparse`). Terms are sorted by absolute contribution so the dominant factor is always visible. New terms appear automatically when added to the reward module.
+
 - **PPO shape errors**: Ensure frame stack (K) matches training config
 - **DWA tuning**: Adjust `configs/control/dwa.yaml` (path weight, dead-zone, d_free/safe)
 
@@ -122,4 +133,3 @@ make benchmark-ppo MODEL=runs/TIMESTAMP/best/best_model.zip VECNORM=runs/TIMESTA
 
 ✅ **Phase I Complete**: Baselines (PP, DWA), PPO residual, benchmarks, videos
 🚧 **Next phases**: Counter-flow, occlusions will extend env + curriculum
-

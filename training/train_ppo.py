@@ -7,7 +7,11 @@ from typing import Any, Dict
 
 from omegaconf import OmegaConf
 from stable_baselines3 import PPO
-from training.callbacks import WandbEvalCallback, CheckpointCallbackWithVecnorm
+from training.callbacks import (
+    WandbEvalCallback,
+    CheckpointCallbackWithVecnorm,
+    RewardTermsLoggingCallback,
+)
 
 from training.env_factory import make_vec_envs
 
@@ -191,7 +195,11 @@ def main():
     )
     # Optional periodic checkpointing
     ckpt_cfg = algo_cfg.get("checkpoint", {})
-    callback = eval_cb
+    # Always include reward breakdown logging (default ON)
+    from stable_baselines3.common.callbacks import CallbackList
+
+    rt_cb = RewardTermsLoggingCallback(wandb_run=wandb_run)
+    callback: Any = CallbackList([eval_cb, rt_cb])
     try:
         if bool(ckpt_cfg.get("enabled", False)):
             ckpt_cb = CheckpointCallbackWithVecnorm(
@@ -203,9 +211,7 @@ def main():
                 to_wandb=bool(ckpt_cfg.get("to_wandb", False)),
                 wandb_run=wandb_run,
             )
-            from stable_baselines3.common.callbacks import CallbackList
-
-            callback = CallbackList([eval_cb, ckpt_cb])
+            callback = CallbackList([eval_cb, rt_cb, ckpt_cb])
     except Exception:
         pass
 

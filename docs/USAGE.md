@@ -73,7 +73,19 @@ make benchmark-ppo MODEL=runs/TIMESTAMP/best/best_model.zip VECNORM=runs/TIMESTA
 - Each training run creates timestamped directory: `runs/YYYYMMDD_HHMMSS/`
 - Use `make list-models` to see available trained models with full paths
 - Renderer uses raw env observations for geometry overlays
+- Reward breakdown HUD shows `R_total` and `R_<term>` contributions sorted by magnitude; new terms appear automatically.
 - Disable LiDAR noise in config for cleaner demo videos
 - Evaluation CSVs written to `runs/bench_*.csv`
 - VecNormalize: `best_model.zip` pairs with `best/vecnorm_best.pkl`; `final_model.zip` pairs with `vecnorm.pkl`
 - Checkpoints: use `.../checkpoints/ckpt_step_XXXXXX/model.zip` with matching `vecnorm.pkl`
+
+## Reward Breakdown & Logging
+
+- Reward is computed in `amr_env/reward.py` and exposed via a stable schema:
+  - `raw`: `{progress, path, effort, sparse}` (unweighted components)
+  - `weights`: mapping from term name to weight (keys match `contrib` names)
+  - `contrib`: weighted contributions per term
+  - `total`: final scalar reward; `version`: schema tag (e.g., `rwd_v1`)
+- The environment attaches `info["reward_terms"]` at terminal steps and includes the same dict in `get_render_payload()` for the renderer HUD.
+- Default logging is ON: `training/callbacks.py:RewardTermsLoggingCallback` records `total`, `contrib/*`, and `raw/*` to TensorBoard; when WandB is enabled it mirrors the same metrics.
+- Config keys live in `configs/reward/default.yaml`. Term names in `weights` must match `contrib` keys (e.g., `path`).

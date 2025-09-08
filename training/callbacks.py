@@ -177,10 +177,71 @@ class CheckpointCallbackWithVecnorm(BaseCallback):
                     self.wandb_run.log_artifact(art)
                 except Exception:
                     pass
-            # Prune old checkpoints
-            self._prune_old_checkpoints()
         except Exception:
             pass
+
+
+class RewardTermsLoggingCallback(BaseCallback):
+    """Logs reward breakdown (total, contrib, raw) when provided by env infos.
+
+    Works with VecEnv: inspects `self.locals["infos"]` each step and, when a
+    dict contains `reward_terms`, logs it to TensorBoard and optionally WandB.
+    """
+
+    def __init__(
+        self,
+        wandb_run: Optional[Any] = None,
+        prefix: str = "train/reward",
+        verbose: int = 0,
+    ) -> None:
+        super().__init__(verbose=verbose)
+        self._wandb = wandb_run
+        self._prefix = prefix
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        if not isinstance(infos, (list, tuple)):
+            return True
+        for info in infos:
+            if not isinstance(info, dict):
+                continue
+            rt = info.get("reward_terms")
+            if not isinstance(rt, dict):
+                continue
+            # Log to SB3 logger (TB/CSV if configured)
+            try:
+                total = float(rt.get("total", float("nan")))
+                self.logger.record(f"{self._prefix}/total", total)
+                contrib = rt.get("contrib", {}) or {}
+                raw = rt.get("raw", {}) or {}
+                for k, v in contrib.items():
+                    self.logger.record(f"{self._prefix}/contrib/{k}", float(v))
+                for k, v in raw.items():
+                    self.logger.record(f"{self._prefix}/raw/{k}", float(v))
+                ver = rt.get("version")
+                if isinstance(ver, str):
+                    # SB3 logger expects numbers; store version as a text
+                    self.logger.record_text(f"{self._prefix}/version", ver)
+            except Exception:
+                pass
+            # Log to WandB if enabled
+            if self._wandb is not None:
+                try:
+                    import wandb  # type: ignore
+
+                    data = {
+                        f"{self._prefix}/total": float(rt.get("total", float("nan")))
+                    }
+                    for k, v in (rt.get("contrib", {}) or {}).items():
+                        data[f"{self._prefix}/contrib/{k}"] = float(v)
+                    for k, v in (rt.get("raw", {}) or {}).items():
+                        data[f"{self._prefix}/raw/{k}"] = float(v)
+                    if isinstance(rt.get("version"), str):
+                        data[f"{self._prefix}/version"] = rt["version"]
+                    self._wandb.log(data)
+                except Exception:
+                    pass
+        return True
 
     def _prune_old_checkpoints(self) -> None:
         if self.keep_last_k <= 0:

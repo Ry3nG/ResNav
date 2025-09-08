@@ -170,6 +170,15 @@ def main():
             xr, yr = float(path_vec[2]), float(path_vec[3])
             look_x = x + np.cos(th) * xr - np.sin(th) * yr
             look_y = y + np.sin(th) * xr + np.cos(th) * yr
+            # Build reward HUD: total + contrib sorted by |value|
+            terms = payload.get("reward_terms", {})
+            contrib = terms.get("contrib", {}) if isinstance(terms, dict) else {}
+            # Sort by absolute magnitude
+            sorted_items = sorted(contrib.items(), key=lambda kv: abs(float(kv[1])), reverse=True)
+            hud = {"R_total": float(terms.get("total", reward))}
+            for k, v in sorted_items:
+                hud[f"R_{k}"] = float(v)
+
             # Render
             frame = renderer.render_frame(
                 raw_grid=payload["raw_grid"],
@@ -186,7 +195,7 @@ def main():
                 proj=None,
                 lookahead=(look_x, look_y),
                 actions=((v_track, w_track), du, u_final),
-                hud={"reward": reward},
+                hud=hud,
             )
             if args.record:
                 # Convert to array immediately to avoid accumulating Surfaces

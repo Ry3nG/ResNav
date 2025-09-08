@@ -22,6 +22,7 @@ from amr_env.sim.lidar import GridLidar
 from amr_env.sim.collision import inflate_grid
 from control.pure_pursuit import compute_u_track
 from .path_utils import compute_path_context
+from amr_env.reward import compute_terms, apply_weights, to_breakdown_dict, RewardTerms
 
 
 class ResidualNavEnv(gym.Env):
@@ -88,6 +89,9 @@ class ResidualNavEnv(gym.Env):
         self._prev_u = (0.0, 0.0)
         self._steps = 0
         self._max_steps = int(run_cfg.get("max_steps", 600))
+        # Reward bookkeeping for renderer/debug
+        self._last_reward_terms: Dict[str, Any] = {}
+        self._prev_goal_dist: float | None = None
 
     def seed(self, seed: int | None = None):
         if seed is not None:
@@ -128,6 +132,8 @@ class ResidualNavEnv(gym.Env):
         self._prev_u = (0.0, 0.0)
         self._last_u = (0.0, 0.0)
         self._steps = 0
+        self._prev_goal_dist = None
+        self._last_reward_terms = {}
 
         obs = self._get_obs()
         # Do not set SB3's episode info; RecordEpisodeStatistics will populate it
@@ -180,6 +186,9 @@ class ResidualNavEnv(gym.Env):
         # Provide success flag on termination for eval metrics
         if terminated or truncated:
             info["is_success"] = bool(terminated and goal_dist < 0.5)
+            # Include reward breakdown at terminal steps for logging
+            if self._last_reward_terms:
+                info["reward_terms"] = self._last_reward_terms
         return obs, reward, terminated, truncated, info
 
     # Debug/visualization helper to avoid poking private fields externally
@@ -199,6 +208,7 @@ class ResidualNavEnv(gym.Env):
             "last_u": self._last_u,
             "prev_u": self._prev_u,
             "obs": self._get_obs(),  # returns current lidar/kin/path as well
+            "reward_terms": dict(getattr(self, "_last_reward_terms", {})),
         }
         return payload
 
@@ -232,42 +242,23 @@ class ResidualNavEnv(gym.Env):
         return float(np.hypot(gx - x, gy - y))
 
     def _compute_reward(self, goal_dist_t: float, terminated: bool) -> float:
-        # Sparse components
-        sparse = 0.0
-        if terminated:
-            if goal_dist_t < 0.5:
-                sparse += float(self.reward_cfg.get("sparse", {}).get("goal", 200.0))
-            else:
-                sparse += float(self.reward_cfg.get("sparse", {}).get("collision", -200.0))
-
-        # Progress shaping: use previous goal distance cached on env
-        d_prev = getattr(self, "_prev_goal_dist", goal_dist_t)
-        progress = d_prev - goal_dist_t
-        self._prev_goal_dist = goal_dist_t
-
-        # Path penalty
-        ctx = getattr(self, "_last_ctx", compute_path_context(self._model.as_pose(), self._waypoints, (1.0, 2.0, 3.0)))
-        path_pen = -(
-            float(self.reward_cfg.get("path_penalty", {}).get("lateral_weight", 1.0)) * abs(ctx.d_lat)
-            + float(self.reward_cfg.get("path_penalty", {}).get("heading_weight", 0.5)) * abs(ctx.theta_err)
+        # Compute raw terms using the reward module (includes sparse decision)
+        terms, new_prev_goal = compute_terms(
+            self._model.as_pose(),
+            self._waypoints,
+            self._prev_goal_dist,
+            self._last_u,
+            self._prev_u,
+            self.robot_cfg,
+            self.reward_cfg,
+            terminated,
         )
+        self._prev_goal_dist = new_prev_goal
 
-        # Effort penalty on residual (difference from tracker)
-        v_track, w_track = compute_u_track(self._model.as_pose(), self._waypoints, self.robot_cfg.get("controller", {}).get("lookahead_m", 1.2), self.robot_cfg.get("controller", {}).get("speed_nominal", 1.0))
-        dv = self._last_u[0] - v_track
-        dw = self._last_u[1] - w_track
-        lam = self.reward_cfg.get("effort_penalty", {"lambda_v": 1.0, "lambda_w": 1.0, "lambda_jerk": 0.05})
-        effort = -(
-            float(lam.get("lambda_v", 1.0)) * abs(dv)
-            + float(lam.get("lambda_w", 1.0)) * abs(dw)
-            + float(lam.get("lambda_jerk", 0.05)) * (abs(self._last_u[0] - self._prev_u[0]) + abs(self._last_u[1] - self._prev_u[1]))
+        weights = self.reward_cfg.get(
+            "weights", {"progress": 1.0, "path": 0.2, "effort": 0.01, "sparse": 1.0}
         )
-
-        wts = self.reward_cfg.get("weights", {"progress": 1.0, "path": 0.2, "effort": 0.01, "sparse": 1.0})
-        R = (
-            float(wts.get("progress", 1.0)) * progress
-            + float(wts.get("path", 0.2)) * path_pen
-            + float(wts.get("effort", 0.01)) * effort
-            + float(wts.get("sparse", 1.0)) * sparse
-        )
-        return float(R)
+        total, contrib = apply_weights(terms, weights)
+        # Pack for renderer/logging
+        self._last_reward_terms = to_breakdown_dict(terms, weights, total, contrib, version="rwd_v1")
+        return float(total)
