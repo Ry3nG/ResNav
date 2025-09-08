@@ -14,7 +14,7 @@ Residual policy + conventional tracker for AMR local navigation in a 2D factory 
 ### 1. Install Dependencies
 ```bash
 # Conda environment recommended
-pip install -r requirements.txt
+conda env create -f environment.yml
 ```
 
 ### 2. Training
