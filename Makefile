@@ -1,6 +1,6 @@
 PY=python
 
-.PHONY: setup train eval test lint fmt train-smoke train-full eval-best render-best eval-model render-model benchmark-ppo list-models
+.PHONY: setup train eval test lint fmt train-smoke train-full eval-best render-best eval-model render-model render-ckpt benchmark-ppo list-models
 
 setup:
 	@echo "[setup] Create environment via requirements.txt (or environment.yml)"
@@ -48,7 +48,17 @@ render-model:
 	@$(eval TIMESTAMP_DIR := $(shell echo $(MODEL_DIR) | sed 's|^runs/||' | sed 's|/.*||'))
 	@$(PY) training/rollout.py --record runs/$(TIMESTAMP_DIR)/demo_$(shell basename $(MODEL) .zip).mp4 --model $(MODEL) --vecnorm $(VECNORM) --steps 600 --deterministic --seed $(or $(SEED),$$RANDOM)
 
-# Legacy targets (deprecated - use eval-model/render-model instead)  
+render-ckpt:
+	@echo "[render-ckpt] Record demo from a checkpoint directory"
+	@test -n "$(CKPT_DIR)" || (echo "Usage: make render-ckpt CKPT_DIR=runs/TIMESTAMP/checkpoints/ckpt_step_N [SEED=42]" && exit 1)
+	@test -f "$(CKPT_DIR)/model.zip" || (echo "Missing $(CKPT_DIR)/model.zip" && exit 1)
+	@test -f "$(CKPT_DIR)/vecnorm.pkl" || (echo "Missing $(CKPT_DIR)/vecnorm.pkl" && exit 1)
+	@$(eval MODEL := $(CKPT_DIR)/model.zip)
+	@$(eval VECNORM := $(CKPT_DIR)/vecnorm.pkl)
+	@$(eval RUN_DIR := $(shell echo $(CKPT_DIR) | sed 's|/checkpoints/.*||'))
+	@$(PY) training/rollout.py --record $(RUN_DIR)/demo_$(shell basename $(CKPT_DIR)).mp4 --model $(MODEL) --vecnorm $(VECNORM) --steps 600 --deterministic --seed $(or $(SEED),$$RANDOM)
+
+# Legacy targets (deprecated - use eval-model/render-model instead)
 eval-best:
 	@echo "[DEPRECATED] Use: make eval-model MODEL=runs/TIMESTAMP/best/best_model.zip VECNORM=runs/TIMESTAMP/vecnorm.pkl"
 	@echo "Available models:" && find runs -name "best_model.zip" 2>/dev/null | head -5

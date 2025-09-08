@@ -43,6 +43,9 @@ make render-dwa       # DWA baseline
 # Trained PPO (after training)
 make list-models      # Shows copy-paste commands
 # Then copy-paste: make render-model MODEL=... VECNORM=... SEED=42
+
+# Render from a checkpoint directory
+# make render-ckpt CKPT_DIR=runs/TIMESTAMP/checkpoints/ckpt_step_50000 SEED=42
 ```
 
 ### 5. Benchmarking (先别用)
