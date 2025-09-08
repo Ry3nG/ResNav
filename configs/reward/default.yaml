@@ -1,0 +1,20 @@
+# Reward components and initial weights
+sparse:
+  goal: 200.0
+  collision: -200.0
+  timeout: -50.0
+
+weights:
+  progress: 1.0
+  path: 0.2
+  effort: 0.01
+  sparse: 1.0
+
+path_penalty:
+  lateral_weight: 1.0
+  heading_weight: 0.5
+
+effort_penalty:
+  lambda_v: 1.0
+  lambda_w: 1.0
+  lambda_jerk: 0.05

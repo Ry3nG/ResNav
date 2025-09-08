@@ -1,0 +1,7 @@
+project: amr_residual_nav
+entity: null  # set if needed
+group: debug
+tags: [phase1, ppo, residual]
+mode: online  # online/offline/disabled
+# save_videos: true  # TODO: implement via rollout + wandb.Video
+upload_artifacts: true

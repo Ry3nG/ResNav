@@ -1,0 +1,20 @@
+defaults:
+  - env: blockage
+  - robot: default
+  - reward: default
+  - algo: ppo
+  - policy: default
+  - curriculum: static_temporal_blockage
+  - wandb: default
+  - seeds: default
+
+run:
+  dt: 0.1  # 10 Hz control & LiDAR
+  vec_envs: 16
+  total_timesteps: 1_000_000
+  eval_interval_episodes: 50
+  device: auto  # cuda if available else cpu
+
+hydra:
+  run:
+    dir: runs/${now:%Y%m%d_%H%M%S}

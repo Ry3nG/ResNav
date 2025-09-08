@@ -1,209 +1,119 @@
-# ME5418 AMR Bottleneck Navigation
+# Unified AMR Navigation via Residual RL
 
-A reinforcement learning environment for Autonomous Mobile Robot (AMR) navigation in industrial bottleneck scenarios. This project focuses on learning continuous control policies that can handle temporary blockages, occluded intersections, and narrow counter-flows without online global replanning.
+Residual policy + conventional tracker for AMR local navigation in a 2D factory map. The RL agent outputs a residual action on top of Pure Pursuit. The stack is Gymnasium + Stable‑Baselines3 (PPO) with Hydra configs, VecEnv, and Weights & Biases logging. Baselines include Pure Pursuit and a lightweight DWA.
 
 ## Key Features
+- **Residual control architecture**: `u_final = clip(u_track + Δu)`
+- **Fast 2D simulator**: unicycle dynamics, occupancy grid, DDA LiDAR (24 beams, 240°)
+- **Phase I scenarios**: temporary blockage in narrow corridors (domain randomization)
+- **Benchmarks and visualizations**: rollout renderer (Pygame), CSV summaries, videos
+- **Reproducibility**: Hydra configs, VecNormalize stats saved, seeds per env
 
-- **Continuous Control**: Learns (v, ω) velocities for differential-drive robots
-- **Sparse Sensing**: Uses only local 2D LiDAR (24 beams, 240° FOV, 4m range)
-- **Path Tracking**: Maintains continuous progress along pre-computed global paths
-- **Industrial Scenarios**: Specialized for warehouse/factory bottleneck navigation
-- **Modular Design**: Clean architecture with configurable components
+## Quickstart
 
-## Quick Start
-
-### Installation
-
+### 1. Install Dependencies
 ```bash
-git clone <repository-url>
-cd ME5418-Project
-conda env create -f environment.yml
-conda activate me5418-nav
-python -m pip install -e .
+# Conda environment recommended
+pip install -r requirements.txt
 ```
 
-### Train a Policy
-
+### 2. Training
 ```bash
-python scripts/train.py --config configs/ppo_default.yaml --outdir runs/ppo
+# Smoke test (2 envs, 5k steps)
+make train-smoke
+
+# Full Phase I training (16 envs, 200k steps)
+make train-full
 ```
 
-### Evaluate and Generate GIF
-
+### 3. Model Management
 ```bash
-# Evaluate the most recent training run and save a GIF
-LATEST_RUN=$(ls -td runs/ppo/* | head -n1)
-python scripts/eval.py \
-  --model "$LATEST_RUN/best_model.zip" \
-  --episodes 50 \
-  --gif runs/eval/ppo_eval.gif
+# List available trained models with copy-paste commands
+make list-models
+
+# Copy-paste the 📊/🎬 commands from the output above
 ```
 
-## Environment Details
+### 4. Visualization
+```bash
+# Baselines (no training needed)
+make render-pp        # Pure Pursuit
+make render-dwa       # DWA baseline
 
-### Observation Space (structured)
-- Shape (flattened): `L + 2 + 2 + 2K`
-- Semantic fields:
-  - **LiDAR** `(L,)`: normalized distances [0,1]
-  - **Kinematics** `(2,)`: [v_norm, ω_norm]
-  - **Path errors** `(2,)`: [e_lat_norm, e_head_norm]
-  - **Preview** `(K,2)`: future waypoints in robot frame (clipped and normalized)
-
-### Action Space (2-dim)
-- **Linear velocity**: v ∈ [-0.6, 1.5] m/s (tanh-squashed to [-1,1] then clamped)
-- **Angular velocity**: ω ∈ [-2, 2] rad/s (direct mapping)
-
-### Reward Function
-```python
-# Directional shaping encourages early, decisive detours:
-# - r_turn: steer toward the freer side (from LiDAR L/R sector imbalance)
-# - r_fwd: only favor straight motion when forward sector is freer than sides
-# - r_gap: weak centering when passing through a gap (optional)
-# - r_brake: penalize forward speed if forward sector is constrained
-reward = (
-    w_prog * progress
-    + r_turn + r_fwd + r_gap + r_brake
-    - w_dv * |Δv| - w_dw * |Δω|
-    - w_step * dt
-    + terminal_rewards  # +R_goal, -R_collide, -R_timeout
-)
+# Trained PPO (after training)
+make list-models      # Shows copy-paste commands
+# Then copy-paste: make render-model MODEL=... VECNORM=... SEED=42
 ```
 
-## Programmatic Usage
+### 5. Benchmarking (先别用)
+```bash
+# Baselines only
+make benchmark-all
 
-### Basic Environment
+# PPO (specify model from list-models)
+# Prefer pairing best model with best vecnorm stats
+make benchmark-ppo MODEL=runs/TIMESTAMP/best/best_model.zip VECNORM=runs/TIMESTAMP/best/vecnorm_best.pkl
+# For final model, pair with final vecnorm stats
+# make benchmark-ppo MODEL=runs/TIMESTAMP/final_model.zip VECNORM=runs/TIMESTAMP/vecnorm.pkl
 
-```python
-from me5418_nav.envs import UnicycleNavEnv
-
-env = UnicycleNavEnv()
-obs, info = env.reset()
-
-for step in range(1000):
-    action = env.action_space.sample()  # Random policy
-    obs, reward, terminated, truncated, info = env.step(action)
-    if terminated or truncated:
-        obs, info = env.reset()
-```
-
-### Custom Configuration
-
-```python
-from me5418_nav.config import EnvConfig, LidarConfig, PathPreviewConfig
-from me5418_nav.envs import UnicycleNavEnv
-
-# Create custom config
-config = EnvConfig(
-    reward={
-        "name": "v1",  # reward implementation to use (default 'v1' if omitted)
-        "w_prog": 1.0, "w_turn": 0.35, "w_fwd": 0.25, "w_gap": 0.10,
-        "w_brake": 0.20, "w_step": 0.25, "w_dv": 0.02, "w_dw": 0.02,
-        "R_goal": 50.0, "R_collide": 120.0, "R_timeout": 15.0,
-    },
-    lidar=LidarConfig(beams=36, fov_deg=270, max_range_m=4.0),
-    preview=PathPreviewConfig(K=5, ds=0.6, range_m=3.0),
-    scenario="blockage",
-    scenario_kwargs={"num_pallets": 2}
-)
-
-env = UnicycleNavEnv(config)
-```
-
-### Training with Stable-Baselines3 (quick demo)
-
-```python
-from stable_baselines3 import PPO
-from me5418_nav.envs import UnicycleNavEnv
-
-env = UnicycleNavEnv()  # headless by default; call env.render('rgb_array') if needed
-model = PPO("MlpPolicy", env, verbose=1)
-model.learn(total_timesteps=100000)
-model.save("ppo_amr_navigation")
+# Checkpoint examples
+# make benchmark-ppo MODEL=runs/TIMESTAMP/checkpoints/ckpt_step_50000/model.zip \
+#                    VECNORM=runs/TIMESTAMP/checkpoints/ckpt_step_50000/vecnorm.pkl
 ```
 
 ## Configuration
 
-All parameters can be configured via YAML files. See `configs/ppo_default.yaml`:
+| Component | Config File | Description |
+|-----------|-------------|-------------|
+| Environment | `configs/env/blockage.yaml` | Map, LiDAR, wrappers |
+| Robot | `configs/robot/default.yaml` | Limits, controller, safety margin |
+| Reward | `configs/reward/default.yaml` | Sparse, progress, path, effort |
+| PPO | `configs/algo/ppo.yaml` | Learning rate, batch size, etc. |
+| Policy | `configs/policy/default.yaml` | MLP sizes, activations |
+| DWA | `configs/control/dwa.yaml` | Weights, lattice, horizon |
+| WandB | `configs/wandb/default.yaml` | Project, mode, tags |
 
-```yaml
-env:
-  dt: 0.1
-  max_steps: 400
-  render_mode: null
-  scenario: blockage
-  scenario_kwargs:
-    num_pallets: 1
-  reward:
-    name: v1  # optional, defaults to 'v1'
-    w_prog: 1.0
-    w_turn: 0.35
-    w_fwd: 0.25
-    w_gap: 0.10
-    w_brake: 0.20
-    w_step: 0.25
-    w_dv: 0.02
-    w_dw: 0.02
-    R_goal: 50.0
-    R_collide: 120.0
-    R_timeout: 15.0
-  lidar:
-    beams: 24
-    fov_deg: 240
-    max_range_m: 4.0
-    step_m: 0.025
-  preview:
-    K: 5
-    ds: 0.6
-    range_m: 3.0
-  # Optional curriculum (example)
-  curriculum:
-    enabled: false
-    stages:
-      - episode_range: [0, 20000]
-        num_pallets_range: [1, 1]
-        corridor_width_range: [2.6, 3.0]
-      - episode_range: [20000, 60000]
-        num_pallets_range: [1, 2]
-        corridor_width_range: [2.4, 2.8]
-      - episode_range: [60000, 100000]
-        num_pallets_range: [2, 3]
-        corridor_width_range: [2.2, 2.6]
-```
+## Make Targets
 
-## Architecture
+| Target | Description |
+|--------|-------------|
+| `make train-smoke` | 5k steps sanity run |
+| `make train-full` | 200k steps training |
+| `make list-models` | List available trained models with copy-paste commands |
+| `make eval-model MODEL=... VECNORM=...` | Evaluate specific model |
+| `make render-model MODEL=... VECNORM=...` | Record demo from specific model |
+| `make benchmark-ppo MODEL=... VECNORM=...` | Benchmark specific PPO model |
+| `make render-pp` | Visualize Pure Pursuit |
+| `make render-dwa` | Visualize DWA |
+| `make test` | Unit tests |
 
-```
-me5418_nav/
-├── envs/           # Gym environment interface
-├── models/         # Robot dynamics (UnicycleModel)
-├── navigation/     # Path tracking algorithms
-├── sensors/        # LiDAR simulation
-├── scenarios/      # Environment generation (blockage, etc.)
-├── visualization/  # Pygame renderer
-└── config.py       # Configuration system
-```
+## Design Overview
 
-## Scenarios
+### Environment Observation (Dict)
+- **lidar**: 24 distances (meters); stacked by Vec wrapper (default K=4 → 96)
+- **kin**: `(v_t, w_t, v_{t-1}, w_{t-1})`
+- **path**: `(d_lat, θ_err, 3 preview waypoints in robot frame)`
 
-### Temporary Blockage
-- Corridor with 1-3 pallets partially blocking the path
-- Robot must navigate through remaining gaps
-- Corridor width: 2.2-3.0m, robot diameter: 0.5m
+### Reward Components
+- **Progress**: `d_{t-1} - d_t`
+- **Path penalty**: `-|d_lat| - 0.5|θ_err|`
+- **Effort**: `-λ_v|Δv| - λ_ω|Δω|`
+- **Sparse**: goal +200, collision -200
 
-## Performance Metrics
+### Technical Details
+- **LiDAR**: DDA raycasting on raw occupancy; collision uses inflated grid
+- **DWA**: lattice forward-sim (2s), obstacle-safe cost, path dead-zone, speed bias
 
-The environment tracks key metrics during evaluation:
-- **Success rate**: Episodes reaching the goal
-- **Collision rate**: Episodes ending in collision
-- **Timeout rate**: Episodes exceeding time limit
-- **Mean completion time**: Average time for successful episodes
-- **Path following length**: Progress along the reference path
+## Tips & Troubleshooting
 
-## Research Applications
+- **Model management**: Use `make list-models` for copy-paste ready commands
+- **VecNormalize**: Playback requires matching stats from training
+- **Renderer**: Shows raw meters/radians (not normalized) for geometry overlays
+- **PPO shape errors**: Ensure frame stack (K) matches training config
+- **DWA tuning**: Adjust `configs/control/dwa.yaml` (path weight, dead-zone, d_free/safe)
 
-This environment is designed for studying:
-- Continuous control in constrained spaces
-- Path tracking vs. obstacle avoidance trade-offs
-- Local sensing for navigation (no global mapping)
-- Industrial robotics scenarios
-- Comparison with classical methods (DWA, Pure Pursuit + APF)
+## Status
+
+✅ **Phase I Complete**: Baselines (PP, DWA), PPO residual, benchmarks, videos
+🚧 **Next phases**: Counter-flow, occlusions will extend env + curriculum
+

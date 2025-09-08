@@ -1,0 +1,15 @@
+torch
+pytorch-lightning
+stable-baselines3
+gymnasium
+numpy
+scipy
+pygame
+matplotlib
+seaborn
+wandb
+hydra-core
+omegaconf
+pytest
+imageio[ffmpeg]
+tensorboard

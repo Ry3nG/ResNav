@@ -1,23 +1,9 @@
-name: me5418-nav
+name: amr-nav
 channels:
   - conda-forge
-  - defaults
+  - pytorch
 dependencies:
   - python=3.10
-  - numpy<2
-  - matplotlib
-  - scipy
-  - tensorboard
-  - wandb
   - pip
   - pip:
-      - gymnasium
-      - stable-baselines3
-      - roboticstoolbox-python
-      - pygame
-      - torch
-      - pydantic
-      - pyyaml
-      - requests
-      - tqdm
-      - rich
+      - -r requirements.txt

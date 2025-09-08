@@ -1,0 +1,13 @@
+feature_extractor:
+  lidar_branch: mlp  # start simple; ablate to conv1d later
+  kin_path_branch: mlp
+  hidden_sizes: [128, 128]
+  activation: relu
+
+actor:
+  hidden_sizes: [128, 128]
+  activation: relu
+
+critic:
+  hidden_sizes: [128, 128]
+  activation: relu

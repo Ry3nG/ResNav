@@ -1,16 +1,22 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "me5418-nav"
+name = "me5418-amr-env"
 version = "0.1.0"
-description = "ME5418 mobile robot navigation project"
+description = "AMR Env: lightweight 2D sim, Gym envs, and tools"
+authors = [{ name = "ME5418 Team" }]
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [
-  { name = "ME5418 Team" }
-]
+dependencies = []
 
 [tool.setuptools.packages.find]
-include = ["me5418_nav*"]
+include = [
+  "amr_env*",
+  "control*",
+  "policy*",
+  "training*",
+  "visualization*",
+  "eval*"
+]

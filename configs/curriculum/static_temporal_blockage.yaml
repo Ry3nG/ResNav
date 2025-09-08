@@ -1,0 +1,11 @@
+phases:
+  - name: static_temporal_blockage
+    criteria:
+      type: steps_or_eval
+      min_steps: 20000
+      min_eval_success: 0.75
+    domain_randomization:
+      corridor_width_m: [3.0, 4.0]
+      blockage_prob: [0.4, 0.8]
+      lidar_noise_std_m: [0.02, 0.05]
+    env: blockage
