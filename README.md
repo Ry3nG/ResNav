@@ -73,7 +73,15 @@ make benchmark-ppo MODEL=runs/TIMESTAMP/best/best_model.zip VECNORM=runs/TIMESTA
 | Component | Config File | Description |
 |-----------|-------------|-------------|
 | Environment | `configs/env/blockage.yaml` | Map, LiDAR, wrappers |
-| Robot | `configs/robot/default.yaml` | Limits, controller, safety margin |
+| Robot | `configs/robot/default.yaml` | Limits (`v_min`, `v_max`, `w_max`), controller, safety margin |
+### Robot config: enabling reverse
+
+- `v_min` controls the lower bound for linear velocity clipping in the env and simulators.
+- Default is `v_min: 0.0` (no reverse). Set a negative value (e.g., `-0.3`) to allow reversing.
+- Applies consistently to PPO and DWA baselines:
+  - Env clips `v_cmd` to `[v_min, v_max]`.
+  - DWA samples velocities from `[v_min, v_max]` and simulates with the same bounds.
+
 | Reward | `configs/reward/default.yaml` | Sparse, progress, path, effort |
 | PPO | `configs/algo/ppo.yaml` | Learning rate, batch size, etc. |
 | Policy | `configs/policy/default.yaml` | MLP sizes, activations |

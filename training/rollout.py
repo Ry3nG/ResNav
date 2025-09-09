@@ -140,8 +140,11 @@ def main():
                     w_heading=float(wcfg.get("heading", 0.1)),
                     w_obst=float(wcfg.get("obstacle", 0.5)),
                     w_smooth=float(wcfg.get("smooth", 0.05)),
+                    v_min=base_env.v_min,
                 )
-                residual = np.array([v_dwa - v_track, w_dwa - w_track], dtype=np.float32)
+                residual = np.array(
+                    [v_dwa - v_track, w_dwa - w_track], dtype=np.float32
+                )
             else:
                 residual = np.array([0.0, 0.0], dtype=np.float32)
             obs, reward, term, trunc, info = base_env.step(residual)
@@ -174,7 +177,9 @@ def main():
             terms = payload.get("reward_terms", {})
             contrib = terms.get("contrib", {}) if isinstance(terms, dict) else {}
             # Sort by absolute magnitude
-            sorted_items = sorted(contrib.items(), key=lambda kv: abs(float(kv[1])), reverse=True)
+            sorted_items = sorted(
+                contrib.items(), key=lambda kv: abs(float(kv[1])), reverse=True
+            )
             hud = {"R_total": float(terms.get("total", reward))}
             for k, v in sorted_items:
                 hud[f"R_{k}"] = float(v)

@@ -75,7 +75,10 @@ def dwa_select_action(
     """
     x0, y0, th0 = pose
     horizon_steps = int(max(1, round(horizon_s / dt)))
-    vs = np.linspace(max(0.0, min(v_min, v_max)), v_max, v_samples)
+    # Allow reverse by sampling velocities from [v_min, v_max]
+    v_low = float(min(v_min, v_max))
+    v_high = float(max(v_max, v_low))
+    vs = np.linspace(v_low, v_high, v_samples)
     ws = np.linspace(-w_max, w_max, w_samples)
 
     # Precompute path heading near current pose (segment 0 by projection)
@@ -105,7 +108,7 @@ def dwa_select_action(
 
     for v in vs:
         for w in ws:
-            model = UnicycleModel(v_max=v_max, w_max=w_max)
+            model = UnicycleModel(v_max=v_max, w_max=w_max, v_min=v_min)
             model.reset(UnicycleState(x0, y0, th0, 0.0, 0.0))
             collided = False
             min_obs = 1e9

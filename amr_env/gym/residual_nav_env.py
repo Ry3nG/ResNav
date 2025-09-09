@@ -28,7 +28,13 @@ from amr_env.reward import compute_terms, apply_weights, to_breakdown_dict, Rewa
 class ResidualNavEnv(gym.Env):
     metadata = {"render.modes": ["human"]}
 
-    def __init__(self, env_cfg: Dict[str, Any], robot_cfg: Dict[str, Any], reward_cfg: Dict[str, Any], run_cfg: Dict[str, Any]):
+    def __init__(
+        self,
+        env_cfg: Dict[str, Any],
+        robot_cfg: Dict[str, Any],
+        reward_cfg: Dict[str, Any],
+        run_cfg: Dict[str, Any],
+    ):
         super().__init__()
         self.env_cfg = env_cfg
         self.robot_cfg = robot_cfg
@@ -41,6 +47,7 @@ class ResidualNavEnv(gym.Env):
         # Robot limits
         self.v_max = float(robot_cfg.get("v_max", 1.5))
         self.w_max = float(robot_cfg.get("w_max", 2.0))
+        self.v_min = float(robot_cfg.get("v_min", 0.0))
         self.radius_m = float(robot_cfg.get("radius_m", 0.25))
 
         # Time step
@@ -61,21 +68,48 @@ class ResidualNavEnv(gym.Env):
 
         # Observation and action spaces
         n_beams = int(lidar_cfg.get("beams", 24))
-        obs_lidar = spaces.Box(low=0.0, high=float(self.lidar.max_range), shape=(n_beams,), dtype=np.float32)
+        obs_lidar = spaces.Box(
+            low=0.0,
+            high=float(self.lidar.max_range),
+            shape=(n_beams,),
+            dtype=np.float32,
+        )
         obs_kin = spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32)
         # Path space bounds: reasonable physical limits
-        d_lat_bound = float(self.env_cfg.get("map", {}).get("corridor_width_m", [3.0, 4.0])[1])
+        d_lat_bound = float(
+            self.env_cfg.get("map", {}).get("corridor_width_m", [3.0, 4.0])[1]
+        )
         theta_bound = float(np.pi)
         preview_bound = 10.0
-        low_path = np.array([-d_lat_bound, -theta_bound, -preview_bound, -preview_bound, -preview_bound, -preview_bound, -preview_bound, -preview_bound], dtype=np.float32)
+        low_path = np.array(
+            [
+                -d_lat_bound,
+                -theta_bound,
+                -preview_bound,
+                -preview_bound,
+                -preview_bound,
+                -preview_bound,
+                -preview_bound,
+                -preview_bound,
+            ],
+            dtype=np.float32,
+        )
         high_path = -low_path
-        obs_path = spaces.Box(low=low_path, high=high_path, shape=(8,), dtype=np.float32)
-        self.observation_space = spaces.Dict({
-            "lidar": obs_lidar,
-            "kin": obs_kin,
-            "path": obs_path,
-        })
-        self.action_space = spaces.Box(low=np.array([-self.v_max, -self.w_max], dtype=np.float32), high=np.array([self.v_max, self.w_max], dtype=np.float32), dtype=np.float32)
+        obs_path = spaces.Box(
+            low=low_path, high=high_path, shape=(8,), dtype=np.float32
+        )
+        self.observation_space = spaces.Dict(
+            {
+                "lidar": obs_lidar,
+                "kin": obs_kin,
+                "path": obs_path,
+            }
+        )
+        self.action_space = spaces.Box(
+            low=np.array([-self.v_max, -self.w_max], dtype=np.float32),
+            high=np.array([self.v_max, self.w_max], dtype=np.float32),
+            dtype=np.float32,
+        )
 
         # Internal state
         self._grid_raw = None
@@ -107,8 +141,16 @@ class ResidualNavEnv(gym.Env):
         safety_margin = float(self.robot_cfg.get("safety_margin_m", 0.0))
         max_tries = 20
         for _ in range(max_tries):
-            self._grid_raw, self._waypoints, self._start_pose, self._goal_xy, self._info = self.scenarios.sample()
-            self._grid_inflated = inflate_grid(self._grid_raw, self.radius_m + safety_margin, self.resolution_m)
+            (
+                self._grid_raw,
+                self._waypoints,
+                self._start_pose,
+                self._goal_xy,
+                self._info,
+            ) = self.scenarios.sample()
+            self._grid_inflated = inflate_grid(
+                self._grid_raw, self.radius_m + safety_margin, self.resolution_m
+            )
             if not self._point_in_inflated(self._start_pose[0], self._start_pose[1]):
                 break
         else:
@@ -117,7 +159,9 @@ class ResidualNavEnv(gym.Env):
             y_center = map_h / 2.0
             H, W = self._grid_inflated.shape
             i_center = int(np.clip(np.floor(y_center / self.resolution_m), 0, H - 1))
-            j0 = int(np.clip(np.floor(self._start_pose[0] / self.resolution_m), 0, W - 1))
+            j0 = int(
+                np.clip(np.floor(self._start_pose[0] / self.resolution_m), 0, W - 1)
+            )
             j_free = j0
             while j_free < W and self._grid_inflated[i_center, j_free]:
                 j_free += 1
@@ -125,7 +169,9 @@ class ResidualNavEnv(gym.Env):
             self._start_pose = (x_free, y_center, self._start_pose[2])
 
         # Init dynamics
-        self._model = UnicycleModel(v_max=self.v_max, w_max=self.w_max)
+        self._model = UnicycleModel(
+            v_max=self.v_max, w_max=self.w_max, v_min=self.v_min
+        )
         x0, y0, th0 = self._start_pose
         self._model.reset(UnicycleState(x0, y0, th0, 0.0, 0.0))
 
@@ -144,11 +190,16 @@ class ResidualNavEnv(gym.Env):
         dv, dw = float(action[0]), float(action[1])
 
         # Base tracker command
-        v_track, w_track = compute_u_track(self._model.as_pose(), self._waypoints, self.robot_cfg.get("controller", {}).get("lookahead_m", 1.2), self.robot_cfg.get("controller", {}).get("speed_nominal", 1.0))
+        v_track, w_track = compute_u_track(
+            self._model.as_pose(),
+            self._waypoints,
+            self.robot_cfg.get("controller", {}).get("lookahead_m", 1.2),
+            self.robot_cfg.get("controller", {}).get("speed_nominal", 1.0),
+        )
         v_cmd = v_track + dv
         w_cmd = w_track + dw
         # Clip to robot limits
-        v_cmd = float(np.clip(v_cmd, 0.0, self.v_max))
+        v_cmd = float(np.clip(v_cmd, self.v_min, self.v_max))
         w_cmd = float(np.clip(w_cmd, -self.w_max, self.w_max))
 
         self._prev_u = self._last_u
@@ -216,11 +267,23 @@ class ResidualNavEnv(gym.Env):
         x, y, th = self._model.as_pose()
         lidar = self.lidar.sense(self._grid_raw, (x, y, th)).astype(np.float32)
 
-        kin = np.array([self._last_u[0], self._last_u[1], self._prev_u[0], self._prev_u[1]], dtype=np.float32)
+        kin = np.array(
+            [self._last_u[0], self._last_u[1], self._prev_u[0], self._prev_u[1]],
+            dtype=np.float32,
+        )
 
         # Cache path context to avoid recomputation in reward
-        self._last_ctx = compute_path_context((x, y, th), self._waypoints, (1.0, 2.0, 3.0))
-        path = np.array([self._last_ctx.d_lat, self._last_ctx.theta_err, *self._last_ctx.previews_robot.flatten().tolist()], dtype=np.float32)
+        self._last_ctx = compute_path_context(
+            (x, y, th), self._waypoints, (1.0, 2.0, 3.0)
+        )
+        path = np.array(
+            [
+                self._last_ctx.d_lat,
+                self._last_ctx.theta_err,
+                *self._last_ctx.previews_robot.flatten().tolist(),
+            ],
+            dtype=np.float32,
+        )
 
         return {"lidar": lidar, "kin": kin, "path": path}
 
@@ -241,7 +304,9 @@ class ResidualNavEnv(gym.Env):
         gx, gy = self._goal_xy
         return float(np.hypot(gx - x, gy - y))
 
-    def _compute_reward(self, goal_dist_t: float, terminated: bool, truncated: bool = False) -> float:
+    def _compute_reward(
+        self, goal_dist_t: float, terminated: bool, truncated: bool = False
+    ) -> float:
         # Compute raw terms using the reward module (includes sparse decision)
         terms, new_prev_goal = compute_terms(
             self._model.as_pose(),
@@ -261,5 +326,7 @@ class ResidualNavEnv(gym.Env):
         )
         total, contrib = apply_weights(terms, weights)
         # Pack for renderer/logging
-        self._last_reward_terms = to_breakdown_dict(terms, weights, total, contrib, version="rwd_v1.1")
+        self._last_reward_terms = to_breakdown_dict(
+            terms, weights, total, contrib, version="rwd_v1.1"
+        )
         return float(total)

@@ -27,7 +27,12 @@ def load_yaml(path: str) -> Dict[str, Any]:
     return cfg
 
 
-def make_env(env_cfg: Dict[str, Any], robot_cfg: Dict[str, Any], reward_cfg: Dict[str, Any], run_cfg: Dict[str, Any]) -> ResidualNavEnv:
+def make_env(
+    env_cfg: Dict[str, Any],
+    robot_cfg: Dict[str, Any],
+    reward_cfg: Dict[str, Any],
+    run_cfg: Dict[str, Any],
+) -> ResidualNavEnv:
     e = ResidualNavEnv(env_cfg, robot_cfg, reward_cfg, run_cfg)
     return e
 
@@ -47,7 +52,9 @@ def run_episode_pp(env: ResidualNavEnv, seed: int) -> Tuple[bool, float, int, in
             return success, float(total_steps * env.dt), collisions, int(trunc)
 
 
-def run_episode_dwa(env: ResidualNavEnv, seed: int, dwa_cfg: Dict[str, Any]) -> Tuple[bool, float, int, int]:
+def run_episode_dwa(
+    env: ResidualNavEnv, seed: int, dwa_cfg: Dict[str, Any]
+) -> Tuple[bool, float, int, int]:
     obs, _ = env.reset(seed=seed)
     total_steps = 0
     collisions = 0
@@ -63,7 +70,12 @@ def run_episode_dwa(env: ResidualNavEnv, seed: int, dwa_cfg: Dict[str, Any]) -> 
         lcfg = dwa_cfg.get("lattice", {})
         horizon_s = float(dwa_cfg.get("horizon_s", 2.0))
         u_dwa = dwa_select_action(
-            (x, y, th), waypoints, grid_infl, env.resolution_m, v_max, w_max,
+            (x, y, th),
+            waypoints,
+            grid_infl,
+            env.resolution_m,
+            v_max,
+            w_max,
             dt=env.dt,
             horizon_s=horizon_s,
             v_samples=int(lcfg.get("v_samples", 15)),
@@ -73,9 +85,15 @@ def run_episode_dwa(env: ResidualNavEnv, seed: int, dwa_cfg: Dict[str, Any]) -> 
             w_heading=float(wcfg.get("heading", 0.1)),
             w_obst=float(wcfg.get("obstacle", 0.5)),
             w_smooth=float(wcfg.get("smooth", 0.05)),
+            v_min=env.v_min,
         )
         # Convert to residual relative to tracker
-        v_track, w_track = compute_u_track((x, y, th), waypoints, env.robot_cfg.get("controller", {}).get("lookahead_m", 1.2), env.robot_cfg.get("controller", {}).get("speed_nominal", 1.0))
+        v_track, w_track = compute_u_track(
+            (x, y, th),
+            waypoints,
+            env.robot_cfg.get("controller", {}).get("lookahead_m", 1.2),
+            env.robot_cfg.get("controller", {}).get("speed_nominal", 1.0),
+        )
         residual = np.array([u_dwa[0] - v_track, u_dwa[1] - w_track], dtype=np.float32)
         obs, reward, term, trunc, info = env.step(residual)
         total_steps += 1
@@ -86,7 +104,15 @@ def run_episode_dwa(env: ResidualNavEnv, seed: int, dwa_cfg: Dict[str, Any]) -> 
             return success, float(total_steps * env.dt), collisions, int(trunc)
 
 
-def run_episode_ppo(env_cfg: Dict[str, Any], robot_cfg: Dict[str, Any], reward_cfg: Dict[str, Any], run_cfg: Dict[str, Any], model_path: str, vecnorm_path: str, seed: int) -> Tuple[bool, float, int, int]:
+def run_episode_ppo(
+    env_cfg: Dict[str, Any],
+    robot_cfg: Dict[str, Any],
+    reward_cfg: Dict[str, Any],
+    run_cfg: Dict[str, Any],
+    model_path: str,
+    vecnorm_path: str,
+    seed: int,
+) -> Tuple[bool, float, int, int]:
     def _make():
         e = make_env(env_cfg, robot_cfg, reward_cfg, run_cfg)
         e.seed(seed)
@@ -101,7 +127,9 @@ def run_episode_ppo(env_cfg: Dict[str, Any], robot_cfg: Dict[str, Any], reward_c
         k = int(fs_cfg.get("k", 4))
         flatten = bool(fs_cfg.get("flatten", True))
         if k > 1:
-            venv = DictFrameStackVec(venv, keys=["lidar"], k=k, flatten=flatten, latest_first=True)
+            venv = DictFrameStackVec(
+                venv, keys=["lidar"], k=k, flatten=flatten, latest_first=True
+            )
     except Exception:
         pass
 
@@ -156,19 +184,33 @@ def main():
             success, time_s, collisions, deadlock = run_episode_dwa(env, ep_seed)
         else:
             assert args.model, "--model required for PPO agent"
-            success, time_s, collisions, deadlock = run_episode_ppo(env_cfg, robot_cfg, reward_cfg, run_cfg, args.model, args.vecnorm, ep_seed)
-        rows.append({
-            "episode": ep,
-            "success": int(success),
-            "time_s": time_s,
-            "collisions": collisions,
-            "deadlock": deadlock,
-            "seed": ep_seed,
-        })
+            success, time_s, collisions, deadlock = run_episode_ppo(
+                env_cfg,
+                robot_cfg,
+                reward_cfg,
+                run_cfg,
+                args.model,
+                args.vecnorm,
+                ep_seed,
+            )
+        rows.append(
+            {
+                "episode": ep,
+                "success": int(success),
+                "time_s": time_s,
+                "collisions": collisions,
+                "deadlock": deadlock,
+                "seed": ep_seed,
+            }
+        )
 
     # Aggregate
     succ = np.mean([r["success"] for r in rows])
-    tmean = np.mean([r["time_s"] for r in rows if r["success"] == 1]) if any(r["success"] for r in rows) else float("nan")
+    tmean = (
+        np.mean([r["time_s"] for r in rows if r["success"] == 1])
+        if any(r["success"] for r in rows)
+        else float("nan")
+    )
     coll = np.mean([r["collisions"] for r in rows])
     dead = np.mean([r["deadlock"] for r in rows])
     print("Summary:")
@@ -180,7 +222,17 @@ def main():
 
     # Write CSV
     with open(args.csv, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["episode", "success", "time_s", "collisions", "deadlock", "seed"])
+        w = csv.DictWriter(
+            f,
+            fieldnames=[
+                "episode",
+                "success",
+                "time_s",
+                "collisions",
+                "deadlock",
+                "seed",
+            ],
+        )
         w.writeheader()
         w.writerows(rows)
 
