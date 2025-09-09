@@ -85,7 +85,7 @@ make benchmark-ppo MODEL=runs/TIMESTAMP/best/best_model.zip VECNORM=runs/TIMESTA
   - `raw`: `{progress, path, effort, sparse}` (unweighted components)
   - `weights`: mapping from term name to weight (keys match `contrib` names)
   - `contrib`: weighted contributions per term
-  - `total`: final scalar reward; `version`: schema tag (e.g., `rwd_v1`)
+  - `total`: final scalar reward
 - The environment attaches `info["reward_terms"]` at terminal steps and includes the same dict in `get_render_payload()` for the renderer HUD.
 - Default logging is ON: `training/callbacks.py:RewardTermsLoggingCallback` records `total`, `contrib/*`, and `raw/*` to TensorBoard; when WandB is enabled it mirrors the same metrics.
 - Config keys live in `configs/reward/default.yaml`. Term names in `weights` must match `contrib` keys (e.g., `path`).

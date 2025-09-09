@@ -9,7 +9,7 @@ Reward Architecture
   - `raw`: unweighted terms (Phase I: progress, path, effort, sparse)
   - `weights`: mapping from term name to weight (keys must match `contrib` keys)
   - `contrib`: weighted contributions per term
-  - `total`: scalar sum; `version`: schema tag (e.g., `rwd_v1`)
+  - `total`: scalar sum
 - Do not compute reward terms in the renderer or training loop. Consume the schema only.
 
 Adding New Reward Terms
@@ -33,5 +33,5 @@ Performance & Determinism
 
 Future Phases (Guidance)
 - New terms candidates: clearance, yield/right-of-way, visibility/occlusion, social distancing, deadlock/no-progress.
-- Prefer incremental schemas (`version`: rwd_v2, rwd_v3) when changing semantics to aid offline analysis.
+- When changing semantics, prefer documenting changes in commits/config snapshots to aid offline analysis.
 

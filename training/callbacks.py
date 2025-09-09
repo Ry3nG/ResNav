@@ -218,10 +218,6 @@ class RewardTermsLoggingCallback(BaseCallback):
                     self.logger.record(f"{self._prefix}/contrib/{k}", float(v))
                 for k, v in raw.items():
                     self.logger.record(f"{self._prefix}/raw/{k}", float(v))
-                ver = rt.get("version")
-                if isinstance(ver, str):
-                    # SB3 logger expects numbers; store version as a text
-                    self.logger.record_text(f"{self._prefix}/version", ver)
             except Exception:
                 pass
             # Log to WandB if enabled
@@ -236,8 +232,6 @@ class RewardTermsLoggingCallback(BaseCallback):
                         data[f"{self._prefix}/contrib/{k}"] = float(v)
                     for k, v in (rt.get("raw", {}) or {}).items():
                         data[f"{self._prefix}/raw/{k}"] = float(v)
-                    if isinstance(rt.get("version"), str):
-                        data[f"{self._prefix}/version"] = rt["version"]
                     self._wandb.log(data)
                 except Exception:
                     pass

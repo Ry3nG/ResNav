@@ -122,7 +122,7 @@ make benchmark-ppo MODEL=runs/TIMESTAMP/best/best_model.zip VECNORM=runs/TIMESTA
   - `raw`: `{progress, path, effort, sparse}` (unweighted)
   - `weights`: `{progress, path, effort, sparse}` (from config)
   - `contrib`: weighted terms with keys matching `weights`
-  - `total`: scalar sum; `version`: schema tag (e.g., `rwd_v1`)
+  - `total`: scalar sum
   - Exposed in `info["reward_terms"]` at terminal steps and in render payload
 
 ## Tips & Troubleshooting

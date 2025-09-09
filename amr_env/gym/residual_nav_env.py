@@ -326,7 +326,5 @@ class ResidualNavEnv(gym.Env):
         )
         total, contrib = apply_weights(terms, weights)
         # Pack for renderer/logging
-        self._last_reward_terms = to_breakdown_dict(
-            terms, weights, total, contrib, version="rwd_v1.1"
-        )
+        self._last_reward_terms = to_breakdown_dict(terms, weights, total, contrib)
         return float(total)

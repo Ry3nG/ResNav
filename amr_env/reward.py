@@ -77,15 +77,15 @@ def compute_terms(
         goal_bonus = float(s_cfg.get("goal", 200.0))
         coll_pen = float(s_cfg.get("collision", -200.0))
         timeout_pen = float(s_cfg.get("timeout", -50.0))
-        
+
         if terminated and goal_dist_t < 0.5:
             sparse = goal_bonus  # Goal reached
         elif terminated:
-            sparse = coll_pen    # Collision (terminated but not at goal)
+            sparse = coll_pen  # Collision (terminated but not at goal)
         elif truncated:
-            sparse = timeout_pen # Timeout (truncated)
+            sparse = timeout_pen  # Timeout (truncated)
         else:
-            sparse = 0.0         # Shouldn't reach here
+            sparse = 0.0  # Shouldn't reach here
 
     terms = RewardTerms(
         progress=float(progress),
@@ -126,7 +126,6 @@ def to_breakdown_dict(
     weights: Dict[str, float],
     total: float,
     contrib: Dict[str, float],
-    version: str = "rwd_v1.1",
 ) -> Dict[str, object]:
     """Pack a standardized reward_terms dict for logging/visualization."""
     return {
@@ -134,5 +133,4 @@ def to_breakdown_dict(
         "weights": {k: float(v) for k, v in weights.items()},
         "contrib": contrib,
         "total": float(total),
-        "version": version,
     }
