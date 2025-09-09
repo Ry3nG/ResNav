@@ -179,7 +179,7 @@ class ResidualNavEnv(gym.Env):
             done = True
 
         # Reward
-        reward = self._compute_reward(goal_dist, terminated)
+        reward = self._compute_reward(goal_dist, terminated, truncated)
 
         obs = self._get_obs()
         info: Dict[str, Any] = {}
@@ -241,7 +241,7 @@ class ResidualNavEnv(gym.Env):
         gx, gy = self._goal_xy
         return float(np.hypot(gx - x, gy - y))
 
-    def _compute_reward(self, goal_dist_t: float, terminated: bool) -> float:
+    def _compute_reward(self, goal_dist_t: float, terminated: bool, truncated: bool = False) -> float:
         # Compute raw terms using the reward module (includes sparse decision)
         terms, new_prev_goal = compute_terms(
             self._model.as_pose(),
@@ -252,6 +252,7 @@ class ResidualNavEnv(gym.Env):
             self.robot_cfg,
             self.reward_cfg,
             terminated,
+            truncated,
         )
         self._prev_goal_dist = new_prev_goal
 
@@ -260,5 +261,5 @@ class ResidualNavEnv(gym.Env):
         )
         total, contrib = apply_weights(terms, weights)
         # Pack for renderer/logging
-        self._last_reward_terms = to_breakdown_dict(terms, weights, total, contrib, version="rwd_v1")
+        self._last_reward_terms = to_breakdown_dict(terms, weights, total, contrib, version="rwd_v1.1")
         return float(total)

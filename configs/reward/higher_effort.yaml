@@ -1,0 +1,22 @@
+# Reward components with higher effort penalty to combat freezing
+# Single-variable change: w_effort 0.01 → 0.03 (3x increase)
+# Prediction: stall cost becomes ~0.015/step, dominating discounted timeout
+sparse:
+  goal: 200.0
+  collision: -200.0
+  timeout: -50.0
+
+weights:
+  progress: 1.0      # unchanged
+  path: 0.2          # unchanged  
+  effort: 0.03       # 0.01 → 0.03 (only change)
+  sparse: 1.0        # unchanged
+
+path_penalty:
+  lateral_weight: 1.0
+  heading_weight: 0.5
+
+effort_penalty:
+  lambda_v: 1.0
+  lambda_w: 1.0
+  lambda_jerk: 0.05

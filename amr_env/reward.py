@@ -32,6 +32,7 @@ def compute_terms(
     robot_cfg: Dict,
     reward_cfg: Dict,
     terminated: bool,
+    truncated: bool = False,
 ) -> Tuple[RewardTerms, float]:
     """Compute raw reward terms and updated prev_goal_dist.
 
@@ -70,12 +71,21 @@ def compute_terms(
         * (abs(last_u[0] - prev_u[0]) + abs(last_u[1] - prev_u[1]))
     )
 
-    # Fill sparse after computing goal distance if terminated
-    if terminated:
+    # Fill sparse after computing goal distance if episode ended
+    if terminated or truncated:
         s_cfg = reward_cfg.get("sparse", {})
         goal_bonus = float(s_cfg.get("goal", 200.0))
         coll_pen = float(s_cfg.get("collision", -200.0))
-        sparse = goal_bonus if goal_dist_t < 0.5 else coll_pen
+        timeout_pen = float(s_cfg.get("timeout", -50.0))
+        
+        if terminated and goal_dist_t < 0.5:
+            sparse = goal_bonus  # Goal reached
+        elif terminated:
+            sparse = coll_pen    # Collision (terminated but not at goal)
+        elif truncated:
+            sparse = timeout_pen # Timeout (truncated)
+        else:
+            sparse = 0.0         # Shouldn't reach here
 
     terms = RewardTerms(
         progress=float(progress),
@@ -116,7 +126,7 @@ def to_breakdown_dict(
     weights: Dict[str, float],
     total: float,
     contrib: Dict[str, float],
-    version: str = "rwd_v1",
+    version: str = "rwd_v1.1",
 ) -> Dict[str, object]:
     """Pack a standardized reward_terms dict for logging/visualization."""
     return {
