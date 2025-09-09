@@ -28,8 +28,8 @@ train-smoke:
 	@$(PY) training/train_ppo.py --n_envs 2 --timesteps 5000
 
 train-full:
-	@echo "[train-full] 16 envs, 2000k steps"
-	@$(PY) training/train_ppo.py --n_envs 16 --timesteps 2000000
+	@echo "[train-full] 16 envs, 1000000k steps"
+	@$(PY) training/train_ppo.py --n_envs 16 --timesteps 10000000
 
 # Parameterized targets - specify MODEL and VECNORM paths
 eval-model:

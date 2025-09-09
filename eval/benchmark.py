@@ -163,6 +163,7 @@ def main():
             "time_s": time_s,
             "collisions": collisions,
             "deadlock": deadlock,
+            "seed": ep_seed,
         })
 
     # Aggregate
@@ -179,7 +180,7 @@ def main():
 
     # Write CSV
     with open(args.csv, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["episode", "success", "time_s", "collisions", "deadlock"])
+        w = csv.DictWriter(f, fieldnames=["episode", "success", "time_s", "collisions", "deadlock", "seed"])
         w.writeheader()
         w.writerows(rows)
 
