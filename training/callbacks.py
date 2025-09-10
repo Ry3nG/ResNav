@@ -11,7 +11,8 @@ from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 
 
 class WandbEvalCallback(EvalCallback):
-    """Eval callback that logs key metrics to wandb if enabled.
+    """Eval callback that logs key metrics to wandb if enabled and
+    saves VecNormalize stats when a new best model is found.
 
     Usage: pass an initialized `wandb.Run` via `wandb_run`.
     """
@@ -27,66 +28,84 @@ class WandbEvalCallback(EvalCallback):
         self._wandb = wandb_run
         # Optional reference to the training VecNormalize instance (or wrapped env)
         self._vecnorm_env = vecnorm_env
-        # No need to track prev best; we'll always sync vecnorm alongside best
 
     def _on_step(self) -> bool:
-        return super()._on_step()
-
-    def _on_event(self) -> None:
-        # Capture previous best before EvalCallback updates
+        # Snapshot prev best before potential EvalCallback update
         prev_best = float(getattr(self, "best_mean_reward", float("-inf")))
-        super()._on_event()
-        # Save VecNormalize only when best improved in this event
+        continue_training = super()._on_step()
+
+        # Detect if an evaluation just occurred
+        eval_happened = False
         try:
-            from stable_baselines3.common.vec_env import VecNormalize as _VN  # type: ignore
+            eval_freq = int(getattr(self, "eval_freq", 0))
+            n_calls = int(getattr(self, "n_calls", 0))
+            eval_happened = eval_freq > 0 and n_calls % eval_freq == 0
+        except Exception:
+            eval_happened = False
 
-            curr_best = float(getattr(self, "best_mean_reward", float("-inf")))
-            if (
-                self.best_model_save_path
-                and curr_best > prev_best
-                and isinstance(self._vecnorm_env, _VN)
-            ):
-                import os
+        # If a new best was found at the just-finished evaluation, sync VecNormalize
+        if eval_happened:
+            try:
+                from stable_baselines3.common.vec_env import VecNormalize as _VN  # type: ignore
 
-                os.makedirs(self.best_model_save_path, exist_ok=True)
-                save_path = os.path.join(self.best_model_save_path, "vecnorm_best.pkl")
-                print(f"[CALLBACK] New best reward: {prev_best:.3f} -> {curr_best:.3f}, saving VecNormalize to {save_path}")
+                curr_best = float(getattr(self, "best_mean_reward", float("-inf")))
+                if (
+                    self.best_model_save_path
+                    and curr_best > prev_best
+                    and isinstance(self._vecnorm_env, _VN)
+                ):
+                    import os
+
+                    os.makedirs(self.best_model_save_path, exist_ok=True)
+                    save_path = os.path.join(
+                        self.best_model_save_path, "vecnorm_best.pkl"
+                    )
+                    print(
+                        f"[CALLBACK] New best: {prev_best:.3f} -> {curr_best:.3f}; "
+                        f"saving VecNormalize to {save_path}"
+                    )
+                    try:
+                        self._vecnorm_env.save(save_path)
+                        print(
+                            f"[CALLBACK] Successfully saved VecNormalize to {save_path}"
+                        )
+                    except Exception as e:
+                        print(
+                            f"[CALLBACK] Failed to save VecNormalize to {save_path}: {e}"
+                        )
+                elif curr_best > prev_best:
+                    print(
+                        f"[CALLBACK] New best: {prev_best:.3f} -> {curr_best:.3f}, "
+                        "but no VecNormalize to save"
+                    )
+            except Exception as e:
+                print(f"[CALLBACK] Error in VecNormalize save logic: {e}")
+
+            # Log metrics to WandB if enabled, only after evaluation
+            if self._wandb is not None:
+                logs: Dict[str, float] = {
+                    "eval/mean_reward": float(
+                        getattr(self, "last_mean_reward", float("nan"))
+                    ),
+                    "time/total_timesteps": float(self.num_timesteps),
+                }
                 try:
-                    self._vecnorm_env.save(save_path)
-                    print(f"[CALLBACK] Successfully saved VecNormalize to {save_path}")
-                except Exception as e:
-                    print(f"[CALLBACK] Failed to save VecNormalize to {save_path}: {e}")
-            elif curr_best > prev_best:
-                print(f"[CALLBACK] New best reward: {prev_best:.3f} -> {curr_best:.3f}, but no VecNormalize to save")
-        except Exception as e:
-            print(f"[CALLBACK] Error in VecNormalize save logic: {e}")
-        if self._wandb is None:
-            return
-        # After each evaluation is complete, EvalCallback sets these attributes
-        # - self.last_mean_reward
-        # - self.best_mean_reward
-        # try to log success rate if present in info dicts
-        logs: Dict[str, float] = {
-            "eval/mean_reward": float(getattr(self, "last_mean_reward", float("nan"))),
-            "eval/best_mean_reward": float(
-                getattr(self, "best_mean_reward", float("nan"))
-            ),
-            "time/total_timesteps": float(self.num_timesteps),
-        }
-        try:
-            # success rates collected by EvalCallback via info["is_success"]
-            if len(self._is_success_buffer) > 0:
-                logs["eval/success_rate"] = float(
-                    sum(self._is_success_buffer) / len(self._is_success_buffer)
-                )
-        except Exception:
-            pass
-        try:
-            import wandb  # type: ignore
+                    # success rates collected by EvalCallback via info["is_success"]
+                    if len(self._is_success_buffer) > 0:
+                        logs["eval/success_rate"] = float(
+                            sum(self._is_success_buffer)
+                            / len(self._is_success_buffer)
+                        )
+                except Exception:
+                    pass
+                try:
+                    import wandb  # type: ignore
 
-            self._wandb.log(logs)
-        except Exception:
-            pass
+                    self._wandb.log(logs)
+                except Exception:
+                    pass
+
+        return continue_training
 
 
 class CheckpointCallbackWithVecnorm(BaseCallback):
