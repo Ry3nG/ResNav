@@ -193,7 +193,16 @@ def main():
             print(
                 "[WARN] No VecNormalize stats found; using raw observations for playback"
             )
-        obs = venv.reset()
+        # Ensure deterministic environment setup when a seed is provided
+        try:
+            obs = venv.reset(seed=int(args.seed))
+        except TypeError:
+            # Fallback for older gym versions without seed kwarg
+            try:
+                venv.seed(int(args.seed))
+            except Exception:
+                pass
+            obs = venv.reset()
         base_env = venv.envs[0]
         if args.model:
             model = PPO.load(args.model, env=venv, print_system_info=False)
