@@ -102,7 +102,9 @@ def main(cfg: DictConfig) -> None:
             )
             # Sync TB event files into W&B
             try:
-                wandb.tensorboard.patch(root_logdir="tb_logs")
+                # Our SB3 logger writes TensorBoard to "logs" via configure() below
+                # so point W&B TB patch to that directory for live streaming.
+                wandb.tensorboard.patch(root_logdir="logs")
             except Exception:
                 pass
     except Exception:

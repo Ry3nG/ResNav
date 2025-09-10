@@ -1,5 +1,5 @@
-project: amr_residual_nav
-entity: null  # set if needed
+project: amr_nav
+entity: me5418_group_13
 group: debug
 tags: [phase1, ppo, residual]
 mode: online  # online/offline/disabled
