@@ -3,10 +3,10 @@ defaults:
   - robot: default
   - reward: default
   - algo: ppo
-  - policy: default
-  - curriculum: static_temporal_blockage
+  - network: default
+  - curriculum: default
   - wandb: default
-  - seeds: default
+  - _self_
 
 run:
   dt: 0.1  # 10 Hz control & LiDAR
@@ -14,7 +14,10 @@ run:
   total_timesteps: 1_000_000
   eval_interval_episodes: 50
   device: auto  # cuda if available else cpu
+  seed: 0  # Default seed for training
 
 hydra:
   run:
     dir: runs/${now:%Y%m%d_%H%M%S}
+  job:
+    chdir: true

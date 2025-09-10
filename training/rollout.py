@@ -7,6 +7,8 @@ from typing import Any, Dict
 
 import numpy as np
 from omegaconf import OmegaConf
+import os
+from pathlib import Path
 
 from amr_env.gym.residual_nav_env import ResidualNavEnv
 from amr_env.gym.wrappers import DictFrameStackVec
@@ -23,36 +25,151 @@ def load_yaml(path: str) -> Dict[str, Any]:
     return cfg
 
 
+def detect_run_dir_from_model(model_path: str) -> str:
+    """
+    Detect run directory from model path.
+    """
+    p = Path(model_path).resolve()
+    if p.is_dir():
+        if p.name in ("best", "final"):
+            return str(p.parent)
+        if p.parent.name == "checkpoints":
+            return str(p.parent.parent)
+        return str(p)
+    if p.name == "best_model.zip" and p.parent.name == "best":
+        return str(p.parent.parent)
+    if p.name == "final_model.zip":
+        return str(p.parent)
+    if p.name == "model.zip" and p.parent.parent.name == "checkpoints":
+        return str(p.parent.parent.parent)
+    return str(p.parent)
+
+
+def load_run_config(run_dir: str) -> Dict[str, Any] | None:
+    rd = Path(run_dir)
+    resolved = rd / "resolved.yaml"
+    hydra_cfg = rd / ".hydra" / "config.yaml"
+    try:
+        from typing import Any as _Any
+        from omegaconf import OmegaConf as _OC
+
+        if resolved.exists():
+            cfg = _OC.to_container(_OC.load(str(resolved)), resolve=True)
+            return cfg if isinstance(cfg, dict) else None
+        if hydra_cfg.exists():
+            cfg = _OC.to_container(_OC.load(str(hydra_cfg)), resolve=True)
+            return cfg if isinstance(cfg, dict) else None
+    except Exception:
+        return None
+    return None
+
+
+def resolve_model_and_vecnorm(path: str) -> tuple[str, str | None, str]:
+    """Given a directory or zip path, resolve (model_zip, vecnorm_pkl|None, run_dir).
+
+    Directory cases:
+      - best/: best_model.zip + vecnorm_best.pkl
+      - final/: final_model.zip + vecnorm_final.pkl (fallback vecnorm.pkl)
+      - checkpoints/ckpt_step_X/: model.zip + vecnorm.pkl
+    Zip file cases are resolved similarly based on filename.
+    """
+    p = Path(path)
+    if p.is_file():
+        p = p.parent
+    if not p.exists():
+        raise SystemExit(f"[ERR] Path does not exist: {path}")
+    model_zip: Path | None = None
+    vecnorm_pkl: Path | None = None
+
+    if p.is_dir():
+        # checkpoint dir
+        if (p / "model.zip").exists():
+            model_zip = p / "model.zip"
+            if (p / "vecnorm.pkl").exists():
+                vecnorm_pkl = p / "vecnorm.pkl"
+        # best dir
+        elif (p / "best_model.zip").exists():
+            model_zip = p / "best_model.zip"
+            if (p / "vecnorm_best.pkl").exists():
+                vecnorm_pkl = p / "vecnorm_best.pkl"
+        # final dir
+        elif (p / "final_model.zip").exists():
+            model_zip = p / "final_model.zip"
+            if (p / "vecnorm_final.pkl").exists():
+                vecnorm_pkl = p / "vecnorm_final.pkl"
+            elif (p / "vecnorm.pkl").exists():
+                vecnorm_pkl = p / "vecnorm.pkl"
+        else:
+            raise SystemExit(
+                f"[ERR] No model zip found in directory: {p}\nSuggest one of: best/, final/, checkpoints/ckpt_step_N/"
+            )
+        run_dir = detect_run_dir_from_model(str(p))
+        return (str(model_zip), str(vecnorm_pkl) if vecnorm_pkl else None, run_dir)
+    raise SystemExit(f"[ERR] Unsupported path: {path}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env_cfg", default="configs/env/blockage.yaml")
-    parser.add_argument("--robot_cfg", default="configs/robot/default.yaml")
-    parser.add_argument("--reward_cfg", default="configs/reward/default.yaml")
-    parser.add_argument("--dt", type=float, default=0.1)
-    parser.add_argument("--steps", type=int, default=300)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--render", action="store_true")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="",
+        help="Model directory: best/ | final/ | checkpoints/ckpt_step_N/",
+    )
     parser.add_argument("--record", type=str, default="")
-    parser.add_argument("--model", type=str, default="")
+    parser.add_argument("--render", action="store_true")
+    parser.add_argument("--steps", type=int, default=600)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--env_cfg", type=str, default="configs/env/blockage.yaml")
+    parser.add_argument("--robot_cfg", type=str, default="configs/robot/default.yaml")
+    parser.add_argument("--reward_cfg", type=str, default="configs/reward/default.yaml")
+    parser.add_argument("--run_cfg", type=str, default="configs/run/default.yaml")
     parser.add_argument("--vecnorm", type=str, default="")
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--agent", choices=["ppo", "pp", "dwa"], default="ppo")
-    parser.add_argument("--dwa_cfg", default="configs/control/dwa.yaml")
+
     args = parser.parse_args()
 
-    env_cfg = load_yaml(args.env_cfg)
-    robot_cfg = load_yaml(args.robot_cfg)
-    reward_cfg = load_yaml(args.reward_cfg)
-    run_cfg = {"dt": args.dt, "max_steps": args.steps}
+    if args.agent == "ppo" and args.model:
+        # Allow passing a directory containing the model and vecnorm
+        model_zip, vecnorm_pkl, run_dir = resolve_model_and_vecnorm(args.model)
+        # Load run config if available
+        cfg = load_run_config(run_dir)
+        env_cfg: Dict[str, Any] = (
+            cfg["env"]
+            if isinstance(cfg, dict) and "env" in cfg
+            else load_yaml(args.env_cfg)
+        )
+        robot_cfg: Dict[str, Any] = (
+            cfg["robot"]
+            if isinstance(cfg, dict) and "robot" in cfg
+            else load_yaml(args.robot_cfg)
+        )
+        reward_cfg: Dict[str, Any] = (
+            cfg["reward"]
+            if isinstance(cfg, dict) and "reward" in cfg
+            else load_yaml(args.reward_cfg)
+        )
+        run_cfg: Dict[str, Any] = (
+            cfg["run"]
+            if isinstance(cfg, dict) and "run" in cfg
+            else load_yaml(args.run_cfg)
+        )
+        # Prepare resolved paths for later loading
+        args.model = model_zip
+        auto_vecnorm = vecnorm_pkl or ""
+    else:
+        env_cfg = load_yaml(args.env_cfg)
+        robot_cfg = load_yaml(args.robot_cfg)
+        reward_cfg = load_yaml(args.reward_cfg)
+        run_cfg = load_yaml(args.run_cfg)
+        auto_vecnorm = ""
 
     # Build env factory so we can wrap with VecNormalize when needed
     def make_env():
         e = ResidualNavEnv(env_cfg, robot_cfg, reward_cfg, run_cfg)
-        e.seed(args.seed)
         return e
 
-    model = None
-    venv = None
     base_env = None
     obs = None
     if args.agent == "ppo" and (args.model or args.vecnorm):
@@ -65,11 +182,17 @@ def main():
             venv = DictFrameStackVec(
                 venv, keys=["lidar"], k=k, flatten=flatten, latest_first=True
             )
-        # Load VecNormalize stats if provided
-        if args.vecnorm:
-            venv = VecNormalize.load(args.vecnorm, venv)
+        # Load VecNormalize stats if provided or auto-detected
+        vecnorm_path = args.vecnorm or auto_vecnorm
+        if vecnorm_path:
+            print(f"[INFO] Loading VecNormalize stats: {vecnorm_path}")
+            venv = VecNormalize.load(vecnorm_path, venv)
             venv.training = False
             venv.norm_reward = False
+        else:
+            print(
+                "[WARN] No VecNormalize stats found; using raw observations for playback"
+            )
         obs = venv.reset()
         base_env = venv.envs[0]
         if args.model:
@@ -95,148 +218,87 @@ def main():
 
     # Rollout
     for t in range(args.steps):
-        if args.agent == "ppo" and model is not None:
-            action, _ = model.predict(obs, deterministic=args.deterministic)
-            obs, rewards, dones, infos = venv.step(action)
-            reward = float(rewards[0])
-            term = bool(dones[0])
-            trunc = False
-            info = infos[0]
+        if args.agent == "ppo" and (args.model or args.vecnorm):
+            action, _ = model.predict(obs, deterministic=bool(args.deterministic))
+            obs, reward, done, info = venv.step(action)
+            # VecEnv API (Gymnasium compatibility in our wrappers): done is array-like
+            if np.any(done):
+                break
         else:
-            # Baselines compute residual directly
-            if args.agent == "pp":
-                residual = np.array([0.0, 0.0], dtype=np.float32)
-            elif args.agent == "dwa":
-                from control.dwa_baseline import dwa_select_action
-
-                payload = base_env.get_render_payload()
-                x, y, th = payload["pose"]
-                waypoints = payload["waypoints"]
-                grid_infl = payload["inflated_grid"]
-                v_track, w_track = compute_u_track(
-                    (x, y, th),
-                    waypoints,
-                    robot_cfg.get("controller", {}).get("lookahead_m", 1.2),
-                    robot_cfg.get("controller", {}).get("speed_nominal", 1.0),
-                )
-                # Load DWA config
-                dwa_cfg = load_yaml(args.dwa_cfg)
-                wcfg = dwa_cfg.get("weights", {})
-                lcfg = dwa_cfg.get("lattice", {})
-                horizon_s = float(dwa_cfg.get("horizon_s", 2.0))
-                v_dwa, w_dwa = dwa_select_action(
-                    (x, y, th),
-                    waypoints,
-                    grid_infl,
-                    base_env.resolution_m,
-                    base_env.v_max,
-                    base_env.w_max,
-                    dt=base_env.dt,
-                    horizon_s=horizon_s,
-                    v_samples=int(lcfg.get("v_samples", 15)),
-                    w_samples=int(lcfg.get("w_samples", 15)),
-                    w_progress=float(wcfg.get("progress", 1.0)),
-                    w_path=float(wcfg.get("path", 1.0)),
-                    w_heading=float(wcfg.get("heading", 0.1)),
-                    w_obst=float(wcfg.get("obstacle", 0.5)),
-                    w_smooth=float(wcfg.get("smooth", 0.05)),
-                    v_min=base_env.v_min,
-                )
-                residual = np.array(
-                    [v_dwa - v_track, w_dwa - w_track], dtype=np.float32
-                )
-            else:
-                residual = np.array([0.0, 0.0], dtype=np.float32)
-            obs, reward, term, trunc, info = base_env.step(residual)
-        # Build a unified single-env obs view for rendering
-        if args.agent == "ppo" and model is not None:
-            obs_view = {
-                k: (v[0] if isinstance(v, np.ndarray) else v) for k, v in obs.items()
-            }
-        else:
-            obs_view = obs
+            u_track = compute_u_track(base_env.robot_state, base_env.path_preview)
+            action = np.array(u_track, dtype=np.float32)
+            obs, reward, terminated, truncated, info = base_env.step(action)
+            if terminated or truncated:
+                break
         if args.render or args.record:
+            # VecEnv returns a list of infos; unwrap for single-env DummyVecEnv
+            info_dict = info[0] if isinstance(info, (list, tuple)) else info
+            reward_breakdown = (
+                info_dict.get("reward", {}) if isinstance(info_dict, dict) else {}
+            )
+            # Get render payload from environment
             payload = base_env.get_render_payload()
-            x, y, th = payload["pose"]
-            # Safe get controller params
-            ctrl = robot_cfg.get("controller", {})
-            lookahead_m = float(ctrl.get("lookahead_m", 1.2))
-            speed_nominal = float(ctrl.get("speed_nominal", 1.0))
-            # Recompute u_track for visualization (pure function)
-            v_track, w_track = compute_u_track(
-                payload["pose"], payload["waypoints"], lookahead_m, speed_nominal
-            )
-            u_final = payload["last_u"]
-            du = (u_final[0] - v_track, u_final[1] - w_track)
-            # First preview point in robot frame -> world
-            path_vec = payload["obs"]["path"]
-            xr, yr = float(path_vec[2]), float(path_vec[3])
-            look_x = x + np.cos(th) * xr - np.sin(th) * yr
-            look_y = y + np.sin(th) * xr + np.cos(th) * yr
-            # Build reward HUD: total + contrib sorted by |value|
-            terms = payload.get("reward_terms", {})
-            contrib = terms.get("contrib", {}) if isinstance(terms, dict) else {}
-            # Sort by absolute magnitude
-            sorted_items = sorted(
-                contrib.items(), key=lambda kv: abs(float(kv[1])), reverse=True
-            )
-            hud = {"R_total": float(terms.get("total", reward))}
-            for k, v in sorted_items:
-                hud[f"R_{k}"] = float(v)
-
-            # Render
+            
+            # Extract lidar data for rendering
+            obs_data = payload.get("obs", {})
+            lidar_ranges = obs_data.get("lidar", np.array([]))
+            lidar_cfg = payload.get("lidar", {})
+            
+            # Build lidar tuple if data available
+            lidar_data = None
+            if len(lidar_ranges) > 0 and lidar_cfg:
+                lidar_data = (
+                    lidar_ranges,
+                    lidar_cfg.get("beams", 24),
+                    lidar_cfg.get("fov_rad", np.radians(240)),
+                    lidar_cfg.get("max_range", 4.0)
+                )
+            
+            # Extract action data for rendering
+            actions_data = None
+            last_u = payload.get("last_u", np.array([0.0, 0.0]))
+            prev_u = payload.get("prev_u", np.array([0.0, 0.0]))
+            if len(last_u) >= 2 and len(prev_u) >= 2:
+                # Compute u_track for reference
+                from control.pure_pursuit import compute_u_track
+                pose = payload["pose"]
+                waypoints = payload.get("waypoints", np.array([]))
+                if len(waypoints) > 0:
+                    # Use robot config for lookahead and speed parameters
+                    controller_cfg = robot_cfg.get("controller", {})
+                    lookahead_m = controller_cfg.get("lookahead_m", 1.0)
+                    v_nominal = controller_cfg.get("speed_nominal", 0.5)
+                    u_track = compute_u_track(pose, waypoints, lookahead_m, v_nominal)
+                    du = last_u - np.array(u_track)
+                    actions_data = (tuple(u_track), tuple(du), tuple(last_u))
+            
             frame = renderer.render_frame(
                 raw_grid=payload["raw_grid"],
-                inflated_grid=payload["inflated_grid"],
-                pose=(x, y, th),
+                inflated_grid=payload.get("inflated_grid"),
+                pose=payload["pose"], 
                 radius_m=payload["radius_m"],
-                lidar=(
-                    payload["obs"]["lidar"],
-                    payload["lidar"]["beams"],
-                    payload["lidar"]["fov_rad"],
-                    payload["lidar"]["max_range"],
-                ),
-                path=payload["waypoints"],
-                proj=None,
-                lookahead=(look_x, look_y),
-                actions=((v_track, w_track), du, u_final),
-                hud=hud,
+                lidar=lidar_data,
+                path=payload.get("waypoints"),
+                actions=actions_data,
+                hud=reward_breakdown
             )
             if args.record:
-                # Convert to array immediately to avoid accumulating Surfaces
+                # Convert pygame Surface to numpy array immediately
                 try:
                     import pygame
-
                     arr = pygame.surfarray.array3d(frame).transpose(1, 0, 2)
-                except Exception:
-                    arr = None
-                if arr is not None:
                     frames.append(arr)
-        # Handle window events to avoid freezing
-        if args.render:
-            try:
-                import pygame
-
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        term = True
-                        trunc = True
-                        break
-            except Exception:
-                pass
-        if term or trunc:
-            break
+                except Exception as e:
+                    print(f"Failed to convert frame to array: {e}")
+            else:
+                frames.append(frame)
 
     if args.record and len(frames) > 0:
+        out = Path(args.record)
+        out.parent.mkdir(parents=True, exist_ok=True)
         fps_out = int(env_cfg.get("viz", {}).get("fps", 20))
-        save_mp4(frames, args.record, fps=fps_out)
-
-    # Cleanup
-    try:
-        if args.render or args.record:
-            renderer.close()
-    except Exception:
-        pass
+        save_mp4(frames, str(out), fps=fps_out)
+        print(f"Saved video with {len(frames)} frames to: {out}")
 
 
 if __name__ == "__main__":

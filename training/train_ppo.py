@@ -1,11 +1,15 @@
-"""PPO training entrypoint with VecEnv, Dict frame stack, and normalization."""
+"""PPO training entrypoint using Hydra config composition.
+
+Replaces argparse with Hydra. Saves a resolved config snapshot (resolved.yaml)
+in the Hydra run directory alongside artifacts.
+"""
 
 from __future__ import annotations
 
-import argparse
 from typing import Any, Dict
 
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
+import hydra
 from stable_baselines3 import PPO
 from training.callbacks import (
     WandbEvalCallback,
@@ -14,12 +18,6 @@ from training.callbacks import (
 )
 
 from training.env_factory import make_vec_envs
-
-
-def load_yaml(path: str) -> Dict[str, Any]:
-    cfg = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
-    assert isinstance(cfg, dict)
-    return cfg
 
 
 def build_policy_kwargs(policy_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,68 +39,70 @@ def build_policy_kwargs(policy_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return {"net_arch": net_arch, "activation_fn": activation_fn}
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--env_cfg", default="configs/env/blockage.yaml")
-    parser.add_argument("--robot_cfg", default="configs/robot/default.yaml")
-    parser.add_argument("--reward_cfg", default="configs/reward/default.yaml")
-    parser.add_argument("--algo_cfg", default="configs/algo/ppo.yaml")
-    parser.add_argument("--policy_cfg", default="configs/policy/default.yaml")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--n_envs", type=int, default=8)
-    parser.add_argument("--timesteps", type=int, default=200_000)
-    args = parser.parse_args()
+@hydra.main(config_path="../configs", config_name="config", version_base=None)
+def main(cfg: DictConfig) -> None:
+    # Resolve composed config to plain dicts where needed
+    env_cfg = OmegaConf.to_container(cfg.env, resolve=True)
+    robot_cfg = OmegaConf.to_container(cfg.robot, resolve=True)
+    reward_cfg = OmegaConf.to_container(cfg.reward, resolve=True)
+    algo_cfg = OmegaConf.to_container(cfg.algo, resolve=True)
+    network_cfg = OmegaConf.to_container(cfg.network, resolve=True)
+    wandb_cfg = OmegaConf.to_container(cfg.get("wandb", {}), resolve=True)
+    assert isinstance(env_cfg, dict) and isinstance(robot_cfg, dict)
+    assert isinstance(reward_cfg, dict) and isinstance(algo_cfg, dict)
+    assert isinstance(network_cfg, dict) and isinstance(wandb_cfg, dict)
 
+    # Run configuration
+    run_cfg = {"dt": float(cfg.run.get("dt", 0.1)), "max_steps": 600}
+
+    # Hydra sets CWD to the run directory (runs/YYYYMMDD_HHMMSS)
+    # Save a resolved config snapshot for later reproduction
     try:
-        env_cfg = load_yaml(args.env_cfg)
-        robot_cfg = load_yaml(args.robot_cfg)
-        reward_cfg = load_yaml(args.reward_cfg)
-        algo_cfg = load_yaml(args.algo_cfg)
-        policy_cfg = load_yaml(args.policy_cfg)
-    except FileNotFoundError as e:
-        raise SystemExit(f"Config file not found: {e}")
-    run_cfg = {"dt": env_cfg.get("run", {}).get("dt", 0.1), "max_steps": 600}
+        with open("resolved.yaml", "w", encoding="utf-8") as f:
+            f.write(OmegaConf.to_yaml(cfg, resolve=True))
+    except Exception:
+        pass
 
-    # Output directory with timestamp to avoid collisions
-    import datetime
+    # Determine base seed and envs/timesteps
+    seed = int(cfg.run.get("seed", 0))
+    n_envs = int(cfg.run.get("vec_envs", 8))
+    total_timesteps = int(cfg.run.get("total_timesteps", 200_000))
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir = env_cfg.get("run", {}).get("out_dir", "runs")
-    out_dir = f"{base_dir}/{timestamp}"
+    # Inform user of output directory (Hydra CWD)
+    try:
+        import os
 
-    import os
-
-    os.makedirs(out_dir, exist_ok=True)
-    print(f"Training outputs will be saved to: {out_dir}")
+        print(f"Training outputs will be saved to: {os.getcwd()}")
+    except Exception:
+        pass
 
     # Initialize Weights & Biases (optional)
     wandb_run = None
     try:
         import wandb  # type: ignore
 
-        wb_cfg = load_yaml("configs/wandb/default.yaml")
-        mode = wb_cfg.get("mode", "online")
+        mode = str(wandb_cfg.get("mode", "online"))
         if mode != "disabled":
             wandb_run = wandb.init(
-                project=wb_cfg.get("project", "amr_residual_nav"),
-                entity=wb_cfg.get("entity"),
+                project=wandb_cfg.get("project", "amr_residual_nav"),
+                entity=wandb_cfg.get("entity"),
                 mode=mode,
                 sync_tensorboard=True,
-                dir=out_dir,
+                dir=".",
                 config={
                     "env": env_cfg,
                     "robot": robot_cfg,
                     "reward": reward_cfg,
                     "algo": algo_cfg,
-                    "policy": policy_cfg,
-                    "seed": args.seed,
-                    "n_envs": args.n_envs,
+                    "network": network_cfg,
+                    "seed": seed,
+                    "n_envs": n_envs,
                 },
-                tags=wb_cfg.get("tags", []),
+                tags=wandb_cfg.get("tags", []),
             )
             # Sync TB event files into W&B
             try:
-                wandb.tensorboard.patch(root_logdir=f"{out_dir}/tb_logs")
+                wandb.tensorboard.patch(root_logdir="tb_logs")
             except Exception:
                 pass
     except Exception:
@@ -114,9 +114,9 @@ def main():
         robot_cfg,
         reward_cfg,
         run_cfg,
-        n_envs=args.n_envs,
-        base_seed=args.seed,
-        use_subproc=(args.n_envs > 1),
+        n_envs=n_envs,
+        base_seed=seed,
+        use_subproc=(n_envs > 1),
         frame_stack_k=int(
             env_cfg.get("wrappers", {}).get("frame_stack", {}).get("k", 4)
         ),
@@ -131,7 +131,7 @@ def main():
         reward_cfg,
         run_cfg,
         n_envs=1,
-        base_seed=args.seed + 1000,
+        base_seed=seed + 1000,
         use_subproc=False,
         frame_stack_k=int(
             env_cfg.get("wrappers", {}).get("frame_stack", {}).get("k", 4)
@@ -152,7 +152,7 @@ def main():
     except Exception:
         pass
 
-    policy_kwargs = build_policy_kwargs(policy_cfg)
+    policy_kwargs = build_policy_kwargs(network_cfg)
 
     model = PPO(
         policy="MultiInputPolicy",
@@ -169,23 +169,23 @@ def main():
         max_grad_norm=float(algo_cfg.get("max_grad_norm", 0.5)),
         policy_kwargs=policy_kwargs,
         verbose=1,
-        seed=args.seed,
-        tensorboard_log=f"{out_dir}/tb_logs",
+        seed=seed,
+        tensorboard_log="tb_logs",
     )
 
     # Ensure SB3 uses TB (W&B will sync TB automatically when enabled above)
     try:
         from stable_baselines3.common.logger import configure
 
-        logger = configure(f"{out_dir}/logs", ["stdout", "csv", "tensorboard"])
+        logger = configure("logs", ["stdout", "csv", "tensorboard"])
         model.set_logger(logger)
     except Exception:
         pass
 
     eval_cb = WandbEvalCallback(
         eval_env,
-        best_model_save_path=f"{out_dir}/best",
-        log_path=f"{out_dir}/eval",
+        best_model_save_path="best",
+        log_path="eval",
         eval_freq=10_000,
         n_eval_episodes=10,
         deterministic=True,
@@ -204,7 +204,7 @@ def main():
         if bool(ckpt_cfg.get("enabled", False)):
             ckpt_cb = CheckpointCallbackWithVecnorm(
                 save_freq_steps=int(ckpt_cfg.get("every_steps", 50_000)),
-                save_dir=f"{out_dir}/checkpoints",
+                save_dir="checkpoints",
                 vecnorm_env=train_env,
                 keep_last_k=int(ckpt_cfg.get("keep_last_k", 3)),
                 prefix=str(ckpt_cfg.get("prefix", "ckpt")),
@@ -215,16 +215,41 @@ def main():
     except Exception:
         pass
 
-    model.learn(total_timesteps=args.timesteps, callback=callback)
-    model.save(f"{out_dir}/final_model")
+    model.learn(total_timesteps=total_timesteps, callback=callback)
+
+    # Save final model in its own directory (like checkpoints)
+    import os
+
+    os.makedirs("final", exist_ok=True)
+    model.save("final/final_model")
+
     # Save VecNormalize statistics if present
     try:
         from stable_baselines3.common.vec_env import VecNormalize as _VN
 
         if isinstance(train_env, _VN):
-            train_env.save(f"{out_dir}/vecnorm.pkl")
+            # New canonical name
+            train_env.save("final/vecnorm_final.pkl")
     except Exception:
         pass
+
+    # Best dir backfill: if best_model.zip exists but vecnorm_best.pkl missing, save it now
+    try:
+        from stable_baselines3.common.vec_env import VecNormalize as _VN
+
+        if os.path.exists("best/best_model.zip") and isinstance(train_env, _VN):
+            os.makedirs("best", exist_ok=True)
+            if not os.path.exists("best/vecnorm_best.pkl"):
+                print("[TRAIN] Best model exists but vecnorm_best.pkl missing, saving backup from final state")
+                try:
+                    train_env.save("best/vecnorm_best.pkl")
+                    print("[TRAIN] Successfully saved backup vecnorm_best.pkl")
+                except Exception as e:
+                    print(f"[TRAIN] Failed to save backup vecnorm_best.pkl: {e}")
+            else:
+                print("[TRAIN] Best model and vecnorm_best.pkl both exist, no backup needed")
+    except Exception as e:
+        print(f"[TRAIN] Error in best dir backfill logic: {e}")
 
     # Save artifacts to WandB
     if wandb_run is not None:
@@ -232,16 +257,16 @@ def main():
             import wandb  # type: ignore
 
             art = wandb.Artifact("models", type="model")
-            art.add_file(f"{out_dir}/final_model.zip")
+            art.add_file("final/final_model.zip")
             # Optional best model and vecnorm
             import os
 
-            if os.path.exists(f"{out_dir}/best/best_model.zip"):
-                art.add_file(f"{out_dir}/best/best_model.zip")
-            if os.path.exists(f"{out_dir}/vecnorm.pkl"):
-                art.add_file(f"{out_dir}/vecnorm.pkl")
-            if os.path.exists(f"{out_dir}/best/vecnorm_best.pkl"):
-                art.add_file(f"{out_dir}/best/vecnorm_best.pkl")
+            if os.path.exists("best/best_model.zip"):
+                art.add_file("best/best_model.zip")
+            if os.path.exists("final/vecnorm_final.pkl"):
+                art.add_file("final/vecnorm_final.pkl")
+            if os.path.exists("best/vecnorm_best.pkl"):
+                art.add_file("best/vecnorm_best.pkl")
             wandb_run.log_artifact(art)
             wandb_run.finish()
         except Exception:

@@ -1,5 +1,5 @@
 phases:
-  - name: static_temporal_blockage
+  - name: default
     criteria:
       type: steps_or_eval
       min_steps: 20000

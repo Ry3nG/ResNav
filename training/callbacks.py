@@ -27,34 +27,39 @@ class WandbEvalCallback(EvalCallback):
         self._wandb = wandb_run
         # Optional reference to the training VecNormalize instance (or wrapped env)
         self._vecnorm_env = vecnorm_env
-        self._prev_best: float = float("-inf")
+        # No need to track prev best; we'll always sync vecnorm alongside best
 
     def _on_step(self) -> bool:
         return super()._on_step()
 
     def _on_event(self) -> None:
+        # Capture previous best before EvalCallback updates
+        prev_best = float(getattr(self, "best_mean_reward", float("-inf")))
         super()._on_event()
-        # If best improved this event, also save VecNormalize stats alongside best model
+        # Save VecNormalize only when best improved in this event
         try:
             from stable_baselines3.common.vec_env import VecNormalize as _VN  # type: ignore
 
-            if getattr(self, "best_mean_reward", float("-inf")) > self._prev_best:
-                self._prev_best = float(
-                    getattr(self, "best_mean_reward", self._prev_best)
-                )
-                if self.best_model_save_path and isinstance(self._vecnorm_env, _VN):
-                    import os
+            curr_best = float(getattr(self, "best_mean_reward", float("-inf")))
+            if (
+                self.best_model_save_path
+                and curr_best > prev_best
+                and isinstance(self._vecnorm_env, _VN)
+            ):
+                import os
 
-                    os.makedirs(self.best_model_save_path, exist_ok=True)
-                    save_path = os.path.join(
-                        self.best_model_save_path, "vecnorm_best.pkl"
-                    )
-                    try:
-                        self._vecnorm_env.save(save_path)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                os.makedirs(self.best_model_save_path, exist_ok=True)
+                save_path = os.path.join(self.best_model_save_path, "vecnorm_best.pkl")
+                print(f"[CALLBACK] New best reward: {prev_best:.3f} -> {curr_best:.3f}, saving VecNormalize to {save_path}")
+                try:
+                    self._vecnorm_env.save(save_path)
+                    print(f"[CALLBACK] Successfully saved VecNormalize to {save_path}")
+                except Exception as e:
+                    print(f"[CALLBACK] Failed to save VecNormalize to {save_path}: {e}")
+            elif curr_best > prev_best:
+                print(f"[CALLBACK] New best reward: {prev_best:.3f} -> {curr_best:.3f}, but no VecNormalize to save")
+        except Exception as e:
+            print(f"[CALLBACK] Error in VecNormalize save logic: {e}")
         if self._wandb is None:
             return
         # After each evaluation is complete, EvalCallback sets these attributes

@@ -11,3 +11,4 @@ actor:
 critic:
   hidden_sizes: [128, 128]
   activation: relu
+

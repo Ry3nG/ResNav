@@ -13,7 +13,7 @@ normalize_obs: true
 normalize_reward: false
 checkpoint:
   enabled: true
-  every_steps: 50000
+  every_steps: 100000
   keep_last_k: 3
   prefix: ckpt
   to_wandb: false
