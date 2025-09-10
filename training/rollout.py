@@ -233,11 +233,28 @@ def main():
         if args.render or args.record:
             # VecEnv returns a list of infos; unwrap for single-env DummyVecEnv
             info_dict = info[0] if isinstance(info, (list, tuple)) else info
-            reward_breakdown = (
-                info_dict.get("reward", {}) if isinstance(info_dict, dict) else {}
-            )
-            # Get render payload from environment
+            # Get render payload from environment (includes reward_terms every step)
             payload = base_env.get_render_payload()
+            # Prefer reward_terms from payload; fallback to info if present
+            rt = {}
+            if isinstance(payload, dict):
+                rt = payload.get("reward_terms", {}) or {}
+            if not rt and isinstance(info_dict, dict):
+                rt = info_dict.get("reward_terms", {}) or {}
+            # Format HUD lines: total + per-term contributions sorted by |value|
+            reward_breakdown = None
+            if isinstance(rt, dict) and rt:
+                try:
+                    lines = {"R_total": float(rt.get("total", 0.0))}
+                    contrib = rt.get("contrib", {}) or {}
+                    # sort by absolute contribution descending
+                    for k, v in sorted(
+                        contrib.items(), key=lambda kv: -abs(float(kv[1]))
+                    ):
+                        lines[f"R_{k}"] = float(v)
+                    reward_breakdown = lines
+                except Exception:
+                    reward_breakdown = None
             
             # Extract lidar data for rendering
             obs_data = payload.get("obs", {})
