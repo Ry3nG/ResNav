@@ -22,10 +22,10 @@ from training.env_factory import make_vec_envs
 
 def build_policy_kwargs(policy_cfg: Dict[str, Any]) -> Dict[str, Any]:
     # Map simple config to SB3 net_arch (new format for SB3 v1.8.0+)
-    actor_sizes = policy_cfg.get("actor", {}).get("hidden_sizes", [128, 128])
-    critic_sizes = policy_cfg.get("critic", {}).get("hidden_sizes", [128, 128])
+    actor_sizes = policy_cfg["actor"]["hidden_sizes"]
+    critic_sizes = policy_cfg["critic"]["hidden_sizes"]
     net_arch = dict(pi=actor_sizes, vf=critic_sizes)  # Direct dict, not list
-    act_name = policy_cfg.get("actor", {}).get("activation", "relu")
+    act_name = policy_cfg["actor"]["activation"]
     # Activation mapping
     import torch.nn as nn
 
@@ -53,7 +53,7 @@ def main(cfg: DictConfig) -> None:
     assert isinstance(network_cfg, dict) and isinstance(wandb_cfg, dict)
 
     # Run configuration
-    run_cfg = {"dt": float(cfg.run.get("dt", 0.1)), "max_steps": 600}
+    run_cfg = {"dt": float(cfg.run["dt"]), "max_steps": 600}
 
     # Hydra sets CWD to the run directory (runs/YYYYMMDD_HHMMSS)
     # Save a resolved config snapshot for later reproduction
@@ -64,9 +64,9 @@ def main(cfg: DictConfig) -> None:
         pass
 
     # Determine base seed and envs/timesteps
-    seed = int(cfg.run.get("seed", 0))
-    n_envs = int(cfg.run.get("vec_envs", 8))
-    total_timesteps = int(cfg.run.get("total_timesteps", 200_000))
+    seed = int(cfg.run["seed"])
+    n_envs = int(cfg.run["vec_envs"])
+    total_timesteps = int(cfg.run["total_timesteps"])
 
     # Inform user of output directory (Hydra CWD)
     try:
@@ -81,10 +81,10 @@ def main(cfg: DictConfig) -> None:
     try:
         import wandb  # type: ignore
 
-        mode = str(wandb_cfg.get("mode", "online"))
+        mode = str(wandb_cfg["mode"])
         if mode != "disabled":
             wandb_run = wandb.init(
-                project=wandb_cfg.get("project", "amr_residual_nav"),
+                project=wandb_cfg["project"],
                 entity=wandb_cfg.get("entity"),
                 mode=mode,
                 sync_tensorboard=True,
@@ -116,15 +116,12 @@ def main(cfg: DictConfig) -> None:
         robot_cfg,
         reward_cfg,
         run_cfg,
+        frame_stack_k=int(
+            env_cfg["wrappers"]["frame_stack"]["k"]
+        ),
         n_envs=n_envs,
         base_seed=seed,
         use_subproc=(n_envs > 1),
-        frame_stack_k=int(
-            env_cfg.get("wrappers", {}).get("frame_stack", {}).get("k", 4)
-        ),
-        frame_stack_flatten=bool(
-            env_cfg.get("wrappers", {}).get("frame_stack", {}).get("flatten", True)
-        ),
         normalize_obs=bool(algo_cfg.get("normalize_obs", True)),
     )
     eval_env = make_vec_envs(
@@ -132,15 +129,12 @@ def main(cfg: DictConfig) -> None:
         robot_cfg,
         reward_cfg,
         run_cfg,
+        frame_stack_k=int(
+            env_cfg["wrappers"]["frame_stack"]["k"]
+        ),
         n_envs=1,
         base_seed=seed + 1000,
         use_subproc=False,
-        frame_stack_k=int(
-            env_cfg.get("wrappers", {}).get("frame_stack", {}).get("k", 4)
-        ),
-        frame_stack_flatten=bool(
-            env_cfg.get("wrappers", {}).get("frame_stack", {}).get("flatten", True)
-        ),
         normalize_obs=bool(algo_cfg.get("normalize_obs", True)),
     )
     # Share VecNormalize stats between train and eval
@@ -159,16 +153,16 @@ def main(cfg: DictConfig) -> None:
     model = PPO(
         policy="MultiInputPolicy",
         env=train_env,
-        learning_rate=float(algo_cfg.get("lr", 3e-4)),
-        n_steps=int(algo_cfg.get("n_steps", 2048)),
-        batch_size=int(algo_cfg.get("batch_size", 256)),
-        n_epochs=int(algo_cfg.get("n_epochs", 10)),
-        gamma=float(algo_cfg.get("gamma", 0.99)),
-        gae_lambda=float(algo_cfg.get("gae_lambda", 0.95)),
-        clip_range=float(algo_cfg.get("clip_range", 0.2)),
-        ent_coef=float(algo_cfg.get("ent_coef", 0.01)),
-        vf_coef=float(algo_cfg.get("vf_coef", 0.5)),
-        max_grad_norm=float(algo_cfg.get("max_grad_norm", 0.5)),
+        learning_rate=float(algo_cfg["lr"]),
+        n_steps=int(algo_cfg["n_steps"]),
+        batch_size=int(algo_cfg["batch_size"]),
+        n_epochs=int(algo_cfg["n_epochs"]),
+        gamma=float(algo_cfg["gamma"]),
+        gae_lambda=float(algo_cfg["gae_lambda"]),
+        clip_range=float(algo_cfg["clip_range"]),
+        ent_coef=float(algo_cfg["ent_coef"]),
+        vf_coef=float(algo_cfg["vf_coef"]),
+        max_grad_norm=float(algo_cfg["max_grad_norm"]),
         policy_kwargs=policy_kwargs,
         verbose=1,
         seed=seed,
@@ -203,14 +197,14 @@ def main(cfg: DictConfig) -> None:
     rt_cb = RewardTermsLoggingCallback(wandb_run=wandb_run)
     callback: Any = CallbackList([eval_cb, rt_cb])
     try:
-        if bool(ckpt_cfg.get("enabled", False)):
+        if bool(ckpt_cfg["enabled"]):
             ckpt_cb = CheckpointCallbackWithVecnorm(
-                save_freq_steps=int(ckpt_cfg.get("every_steps", 50_000)),
+                save_freq_steps=int(ckpt_cfg["every_steps"]),
                 save_dir="checkpoints",
                 vecnorm_env=train_env,
-                keep_last_k=int(ckpt_cfg.get("keep_last_k", 3)),
-                prefix=str(ckpt_cfg.get("prefix", "ckpt")),
-                to_wandb=bool(ckpt_cfg.get("to_wandb", False)),
+                keep_last_k=int(ckpt_cfg["keep_last_k"]),
+                prefix=str(ckpt_cfg["prefix"]),
+                to_wandb=bool(ckpt_cfg["to_wandb"]),
                 wandb_run=wandb_run,
             )
             callback = CallbackList([eval_cb, rt_cb, ckpt_cb])

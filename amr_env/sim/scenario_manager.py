@@ -34,19 +34,19 @@ class ScenarioManager:
         self._rng = np.random.default_rng(seed)
 
     def _build_blockage_cfg(self) -> BlockageScenarioConfig:
-        msize = self.env_cfg.get("map", {}).get("size_m", [50.0, 50.0])
-        resolution = float(self.env_cfg.get("map", {}).get("resolution_m", 0.2))
-        cw_min, cw_max = self.env_cfg.get("map", {}).get("corridor_width_m", [3.0, 4.0])
-        wall_th = float(self.env_cfg.get("map", {}).get("wall_thickness_m", 0.3))
+        msize = self.env_cfg["map"]["size_m"]
+        resolution = float(self.env_cfg["map"]["resolution_m"])
+        cw_min, cw_max = self.env_cfg["map"]["corridor_width_m"]
+        wall_th = float(self.env_cfg["map"]["wall_thickness_m"])
 
-        pallet_w = float(self.env_cfg.get("map", {}).get("pallet_width_m", 1.1))
-        pallet_l = float(self.env_cfg.get("map", {}).get("pallet_length_m", 0.6))
-        start_x = float(self.env_cfg.get("map", {}).get("start_x_m", 1.0))
-        goal_mx = float(self.env_cfg.get("map", {}).get("goal_margin_x_m", 1.0))
-        wp_step = float(self.env_cfg.get("map", {}).get("waypoint_step_m", 0.3))
-        min_pass = float(self.env_cfg.get("map", {}).get("min_passage_m", 0.7))
-        nmin = int(self.env_cfg.get("map", {}).get("num_pallets_min", 1))
-        nmax = int(self.env_cfg.get("map", {}).get("num_pallets_max", 1))
+        pallet_w = float(self.env_cfg["map"]["pallet_width_m"])
+        pallet_l = float(self.env_cfg["map"]["pallet_length_m"])
+        start_x = float(self.env_cfg["map"]["start_x_m"])
+        goal_mx = float(self.env_cfg["map"]["goal_margin_x_m"])
+        wp_step = float(self.env_cfg["map"]["waypoint_step_m"])
+        min_pass = float(self.env_cfg["map"]["min_passage_m"])
+        nmin = int(self.env_cfg["map"]["num_pallets_min"])
+        nmax = int(self.env_cfg["map"]["num_pallets_max"])
 
         return BlockageScenarioConfig(
             map_width_m=float(msize[0]),

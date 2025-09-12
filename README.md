@@ -1,6 +1,6 @@
 # Unified AMR Navigation via Residual RL
 
-Residual policy + conventional tracker for AMR local navigation in a 2D factory map. The RL agent outputs a residual action on top of Pure Pursuit. The stack is Gymnasium + Stable‑Baselines3 (PPO) with Hydra configs, VecEnv, and Weights & Biases logging. Baselines include Pure Pursuit and a lightweight DWA.
+Residual policy + conventional tracker for AMR local navigation in a 2D factory map. The RL agent outputs a residual action on top of Pure Pursuit. The stack is Gymnasium + Stable‑Baselines3 (PPO) with Hydra configs, VecEnv, and Weights & Biases logging. Baseline includes Pure Pursuit.
 
 ## Key Features
 - Residual control: `u_final = clip(u_track + Δu)`

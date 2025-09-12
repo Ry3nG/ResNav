@@ -5,9 +5,14 @@ Provides `WandbEvalCallback` which wraps SB3 EvalCallback metrics into Weights &
 
 from __future__ import annotations
 
+import os
+import json
+import shutil
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
+from stable_baselines3.common.vec_env import VecNormalize
 
 
 class WandbEvalCallback(EvalCallback):
@@ -30,80 +35,38 @@ class WandbEvalCallback(EvalCallback):
         self._vecnorm_env = vecnorm_env
 
     def _on_step(self) -> bool:
-        # Snapshot prev best before potential EvalCallback update
         prev_best = float(getattr(self, "best_mean_reward", float("-inf")))
         continue_training = super()._on_step()
 
-        # Detect if an evaluation just occurred
-        eval_happened = False
-        try:
-            eval_freq = int(getattr(self, "eval_freq", 0))
-            n_calls = int(getattr(self, "n_calls", 0))
-            eval_happened = eval_freq > 0 and n_calls % eval_freq == 0
-        except Exception:
-            eval_happened = False
+        # Check if evaluation just occurred
+        eval_freq = int(getattr(self, "eval_freq", 0))
+        n_calls = int(getattr(self, "n_calls", 0))
+        eval_happened = eval_freq > 0 and n_calls % eval_freq == 0
 
-        # If a new best was found at the just-finished evaluation, sync VecNormalize
         if eval_happened:
-            try:
-                from stable_baselines3.common.vec_env import VecNormalize as _VN  # type: ignore
+            curr_best = float(getattr(self, "best_mean_reward", float("-inf")))
+            
+            # Save VecNormalize if new best found
+            if (self.best_model_save_path and curr_best > prev_best 
+                and isinstance(self._vecnorm_env, VecNormalize)):
+                os.makedirs(self.best_model_save_path, exist_ok=True)
+                save_path = os.path.join(self.best_model_save_path, "vecnorm_best.pkl")
+                print(f"[CALLBACK] New best: {prev_best:.3f} -> {curr_best:.3f}; saving VecNormalize")
+                self._vecnorm_env.save(save_path)
+            elif curr_best > prev_best:
+                print(f"[CALLBACK] New best: {prev_best:.3f} -> {curr_best:.3f}")
 
-                curr_best = float(getattr(self, "best_mean_reward", float("-inf")))
-                if (
-                    self.best_model_save_path
-                    and curr_best > prev_best
-                    and isinstance(self._vecnorm_env, _VN)
-                ):
-                    import os
-
-                    os.makedirs(self.best_model_save_path, exist_ok=True)
-                    save_path = os.path.join(
-                        self.best_model_save_path, "vecnorm_best.pkl"
-                    )
-                    print(
-                        f"[CALLBACK] New best: {prev_best:.3f} -> {curr_best:.3f}; "
-                        f"saving VecNormalize to {save_path}"
-                    )
-                    try:
-                        self._vecnorm_env.save(save_path)
-                        print(
-                            f"[CALLBACK] Successfully saved VecNormalize to {save_path}"
-                        )
-                    except Exception as e:
-                        print(
-                            f"[CALLBACK] Failed to save VecNormalize to {save_path}: {e}"
-                        )
-                elif curr_best > prev_best:
-                    print(
-                        f"[CALLBACK] New best: {prev_best:.3f} -> {curr_best:.3f}, "
-                        "but no VecNormalize to save"
-                    )
-            except Exception as e:
-                print(f"[CALLBACK] Error in VecNormalize save logic: {e}")
-
-            # Log metrics to WandB if enabled, only after evaluation
+            # Log to WandB
             if self._wandb is not None:
-                logs: Dict[str, float] = {
-                    "eval/mean_reward": float(
-                        getattr(self, "last_mean_reward", float("nan"))
-                    ),
+                logs = {
+                    "eval/mean_reward": float(getattr(self, "last_mean_reward", 0)),
                     "time/total_timesteps": float(self.num_timesteps),
                 }
-                try:
-                    # success rates collected by EvalCallback via info["is_success"]
-                    if len(self._is_success_buffer) > 0:
-                        logs["eval/success_rate"] = float(
-                            sum(self._is_success_buffer)
-                            / len(self._is_success_buffer)
-                        )
-                except Exception:
-                    pass
-                try:
-                    import wandb  # type: ignore
-
-                    self._wandb.log(logs)
-                except Exception:
-                    pass
+                if len(self._is_success_buffer) > 0:
+                    logs["eval/success_rate"] = sum(self._is_success_buffer) / len(self._is_success_buffer)
+                
+                import wandb
+                self._wandb.log(logs)
 
         return continue_training
 
@@ -138,8 +101,6 @@ class CheckpointCallbackWithVecnorm(BaseCallback):
         self._last_saved_at: int = 0
 
     def _init_callback(self) -> None:
-        import os
-
         os.makedirs(self.save_dir, exist_ok=True)
 
     def _on_step(self) -> bool:
@@ -150,59 +111,69 @@ class CheckpointCallbackWithVecnorm(BaseCallback):
         return True
 
     def _save_checkpoint(self) -> None:
-        import os
-        import json
-        from datetime import datetime
-        from stable_baselines3.common.vec_env import VecNormalize as _VN  # type: ignore
+        step_dir = os.path.join(self.save_dir, f"{self.prefix}_step_{self.num_timesteps}")
+        os.makedirs(step_dir, exist_ok=True)
+        
+        # Save model
+        model_path = os.path.join(step_dir, "model")
+        self.model.save(model_path)
+        
+        # Save vecnorm if available
+        vecnorm_path = None
+        if isinstance(self.vecnorm_env, VecNormalize):
+            vecnorm_path = os.path.join(step_dir, "vecnorm.pkl")
+            self.vecnorm_env.save(vecnorm_path)
+        
+        # Save metadata
+        self._save_metadata(step_dir, model_path, vecnorm_path)
+        
+        # Upload to WandB if requested
+        if self.to_wandb and self.wandb_run is not None:
+            self._upload_to_wandb(model_path, vecnorm_path, step_dir)
+        
+        # Clean old checkpoints
+        self._prune_old_checkpoints()
 
-        step_dir = os.path.join(
-            self.save_dir, f"{self.prefix}_step_{self.num_timesteps}"
-        )
-        try:
-            os.makedirs(step_dir, exist_ok=True)
-            # Save model
-            model_path = os.path.join(step_dir, "model")
-            self.model.save(model_path)
-            # Save vecnorm if available
-            vecnorm_path = None
-            if isinstance(self.vecnorm_env, _VN):
-                vecnorm_path = os.path.join(step_dir, "vecnorm.pkl")
-                try:
-                    self.vecnorm_env.save(vecnorm_path)
-                except Exception:
-                    vecnorm_path = None
-            # Save meta
-            meta_path = os.path.join(step_dir, "meta.json")
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "step": int(self.num_timesteps),
-                        "timestamp": datetime.utcnow().isoformat() + "Z",
-                        "model": os.path.basename(model_path) + ".zip",
-                        "vecnorm": (
-                            os.path.basename(vecnorm_path) if vecnorm_path else None
-                        ),
-                    },
-                    f,
-                    indent=2,
-                )
-            # Optional: upload to WandB
-            if self.to_wandb and self.wandb_run is not None:
-                try:
-                    import wandb  # type: ignore
+    def _save_metadata(self, step_dir: str, model_path: str, vecnorm_path: Optional[str]) -> None:
+        meta_path = os.path.join(step_dir, "meta.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "step": int(self.num_timesteps),
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "model": os.path.basename(model_path) + ".zip",
+                "vecnorm": os.path.basename(vecnorm_path) if vecnorm_path else None,
+            }, f, indent=2)
 
-                    art = wandb.Artifact(
-                        f"checkpoint_step_{self.num_timesteps}", type="model"
-                    )
-                    art.add_file(model_path + ".zip")
-                    if vecnorm_path is not None and os.path.exists(vecnorm_path):
-                        art.add_file(vecnorm_path)
-                    art.add_file(meta_path)
-                    self.wandb_run.log_artifact(art)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+    def _upload_to_wandb(self, model_path: str, vecnorm_path: Optional[str], step_dir: str) -> None:
+        import wandb
+        
+        art = wandb.Artifact(f"checkpoint_step_{self.num_timesteps}", type="model")
+        art.add_file(model_path + ".zip")
+        if vecnorm_path and os.path.exists(vecnorm_path):
+            art.add_file(vecnorm_path)
+        art.add_file(os.path.join(step_dir, "meta.json"))
+        self.wandb_run.log_artifact(art)
+
+    def _prune_old_checkpoints(self) -> None:
+        if self.keep_last_k <= 0:
+            return
+        
+        import re
+        pattern = re.compile(rf"^{re.escape(self.prefix)}_step_(\d+)$")
+        
+        entries = []
+        for name in os.listdir(self.save_dir):
+            full = os.path.join(self.save_dir, name)
+            if not os.path.isdir(full):
+                continue
+            m = pattern.match(name)
+            if m:
+                step = int(m.group(1))
+                entries.append((step, full))
+        
+        entries.sort(key=lambda x: x[0], reverse=True)
+        for _, path in entries[self.keep_last_k:]:
+            shutil.rmtree(path, ignore_errors=True)
 
 
 class RewardTermsLoggingCallback(BaseCallback):
@@ -226,67 +197,32 @@ class RewardTermsLoggingCallback(BaseCallback):
         infos = self.locals.get("infos", [])
         if not isinstance(infos, (list, tuple)):
             return True
+            
         for info in infos:
-            if not isinstance(info, dict):
-                continue
-            rt = info.get("reward_terms")
-            if not isinstance(rt, dict):
-                continue
-            # Log to SB3 logger (TB/CSV if configured)
-            try:
-                total = float(rt.get("total", float("nan")))
-                self.logger.record(f"{self._prefix}/total", total)
-                contrib = rt.get("contrib", {}) or {}
-                raw = rt.get("raw", {}) or {}
-                for k, v in contrib.items():
-                    self.logger.record(f"{self._prefix}/contrib/{k}", float(v))
-                for k, v in raw.items():
-                    self.logger.record(f"{self._prefix}/raw/{k}", float(v))
-            except Exception:
-                pass
-            # Log to WandB if enabled
-            if self._wandb is not None:
-                try:
-                    import wandb  # type: ignore
-
-                    data = {
-                        f"{self._prefix}/total": float(rt.get("total", float("nan")))
-                    }
-                    for k, v in (rt.get("contrib", {}) or {}).items():
-                        data[f"{self._prefix}/contrib/{k}"] = float(v)
-                    for k, v in (rt.get("raw", {}) or {}).items():
-                        data[f"{self._prefix}/raw/{k}"] = float(v)
-                    self._wandb.log(data)
-                except Exception:
-                    pass
+            if isinstance(info, dict) and "reward_terms" in info:
+                rt = info["reward_terms"]
+                if isinstance(rt, dict):
+                    self._log_reward_terms(rt)
         return True
 
-    def _prune_old_checkpoints(self) -> None:
-        if self.keep_last_k <= 0:
-            return
-        import os
-        import re
+    def _log_reward_terms(self, reward_terms: Dict[str, Any]) -> None:
+        # Log to SB3 logger
+        total = float(reward_terms.get("total", 0))
+        self.logger.record(f"{self._prefix}/total", total)
+        
+        for category in ["contrib", "raw"]:
+            terms = reward_terms.get(category, {}) or {}
+            for k, v in terms.items():
+                self.logger.record(f"{self._prefix}/{category}/{k}", float(v))
+        
+        # Log to WandB
+        if self._wandb is not None:
+            import wandb
+            
+            data = {f"{self._prefix}/total": total}
+            for category in ["contrib", "raw"]:
+                terms = reward_terms.get(category, {}) or {}
+                for k, v in terms.items():
+                    data[f"{self._prefix}/{category}/{k}"] = float(v)
+            self._wandb.log(data)
 
-        pattern = re.compile(rf"^{re.escape(self.prefix)}_step_(\d+)$")
-        try:
-            entries = []
-            for name in os.listdir(self.save_dir):
-                full = os.path.join(self.save_dir, name)
-                if not os.path.isdir(full):
-                    continue
-                m = pattern.match(name)
-                if not m:
-                    continue
-                step = int(m.group(1))
-                entries.append((step, full))
-            entries.sort(key=lambda x: x[0], reverse=True)
-            for _, path in entries[self.keep_last_k :]:
-                try:
-                    # Best-effort remove directory tree
-                    import shutil
-
-                    shutil.rmtree(path, ignore_errors=True)
-                except Exception:
-                    pass
-        except Exception:
-            pass

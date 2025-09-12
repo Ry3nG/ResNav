@@ -1,7 +1,7 @@
 """Residual navigation Gymnasium environment (Phase I core).
 
 Observation Dict keys:
-- lidar: 1×N array of distances (no stacking here; wrapper stacks later)
+- lidar: 1xN array of distances (no stacking here; wrapper stacks later)
 - kin: (v_t, ω_t, v_{t-1}, ω_{t-1})
 - path: (d_lat, θ_err, x1, y1, x2, y2, x3, y3) in robot frame
 
@@ -45,29 +45,29 @@ class ResidualNavEnv(gym.Env):
         self.scenarios = ScenarioManager(env_cfg)
 
         # Robot limits
-        self.v_max = float(robot_cfg.get("v_max", 1.5))
-        self.w_max = float(robot_cfg.get("w_max", 2.0))
-        self.v_min = float(robot_cfg.get("v_min", 0.0))
-        self.radius_m = float(robot_cfg.get("radius_m", 0.25))
+        self.v_max = float(robot_cfg["v_max"])
+        self.w_max = float(robot_cfg["w_max"])
+        self.v_min = float(robot_cfg["v_min"])
+        self.radius_m = float(robot_cfg["radius_m"])
 
         # Time step
-        self.dt = float(run_cfg.get("dt", 0.1))
+        self.dt = float(run_cfg["dt"])
 
         # LiDAR parameters
-        lidar_cfg = env_cfg.get("lidar", {})
-        map_cfg = env_cfg.get("map", {})
-        self.resolution_m = float(map_cfg.get("resolution_m", 0.2))
+        lidar_cfg = env_cfg["lidar"]
+        map_cfg = env_cfg["map"]
+        self.resolution_m = float(map_cfg["resolution_m"])
         self.lidar = GridLidar(
-            beams=int(lidar_cfg.get("beams", 24)),
-            fov_deg=float(lidar_cfg.get("fov_deg", 240.0)),
-            max_range_m=float(lidar_cfg.get("max_range_m", 4.0)),
-            noise_std_m=float(lidar_cfg.get("noise_std_m", 0.03)),
-            noise_enable=bool(lidar_cfg.get("noise_enable", True)),
+            beams=int(lidar_cfg["beams"]),
+            fov_deg=float(lidar_cfg["fov_deg"]),
+            max_range_m=float(lidar_cfg["max_range_m"]),
+            noise_std_m=float(lidar_cfg["noise_std_m"]),
+            noise_enable=bool(lidar_cfg["noise_enable"]),
             resolution_m=self.resolution_m,
         )
 
         # Observation and action spaces
-        n_beams = int(lidar_cfg.get("beams", 24))
+        n_beams = int(lidar_cfg["beams"])
         obs_lidar = spaces.Box(
             low=0.0,
             high=float(self.lidar.max_range),
@@ -77,7 +77,7 @@ class ResidualNavEnv(gym.Env):
         obs_kin = spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32)
         # Path space bounds: reasonable physical limits
         d_lat_bound = float(
-            self.env_cfg.get("map", {}).get("corridor_width_m", [3.0, 4.0])[1]
+            self.env_cfg["map"]["corridor_width_m"][1]
         )
         theta_bound = float(np.pi)
         preview_bound = 10.0
@@ -122,7 +122,7 @@ class ResidualNavEnv(gym.Env):
         self._last_u = (0.0, 0.0)
         self._prev_u = (0.0, 0.0)
         self._steps = 0
-        self._max_steps = int(run_cfg.get("max_steps", 600))
+        self._max_steps = int(run_cfg["max_steps"])
         # Reward bookkeeping for renderer/debug
         self._last_reward_terms: Dict[str, Any] = {}
         self._prev_goal_dist: float | None = None
@@ -138,7 +138,7 @@ class ResidualNavEnv(gym.Env):
             self.seed(seed)
 
         # Sample scenario and ensure start pose is free in inflated grid
-        safety_margin = float(self.robot_cfg.get("safety_margin_m", 0.0))
+        safety_margin = float(self.robot_cfg["safety_margin_m"])
         max_tries = 20
         for _ in range(max_tries):
             (
@@ -153,20 +153,6 @@ class ResidualNavEnv(gym.Env):
             )
             if not self._point_in_inflated(self._start_pose[0], self._start_pose[1]):
                 break
-        else:
-            # Fallback: slide start along centerline to nearest free cell
-            map_h = float(self.env_cfg.get("map", {}).get("size_m", [50.0, 50.0])[1])
-            y_center = map_h / 2.0
-            H, W = self._grid_inflated.shape
-            i_center = int(np.clip(np.floor(y_center / self.resolution_m), 0, H - 1))
-            j0 = int(
-                np.clip(np.floor(self._start_pose[0] / self.resolution_m), 0, W - 1)
-            )
-            j_free = j0
-            while j_free < W and self._grid_inflated[i_center, j_free]:
-                j_free += 1
-            x_free = (min(j_free, W - 1) + 0.5) * self.resolution_m
-            self._start_pose = (x_free, y_center, self._start_pose[2])
 
         # Init dynamics
         self._model = UnicycleModel(
@@ -193,8 +179,8 @@ class ResidualNavEnv(gym.Env):
         v_track, w_track = compute_u_track(
             self._model.as_pose(),
             self._waypoints,
-            self.robot_cfg.get("controller", {}).get("lookahead_m", 1.2),
-            self.robot_cfg.get("controller", {}).get("speed_nominal", 1.0),
+            self.robot_cfg["controller"]["lookahead_m"],
+            self.robot_cfg["controller"]["speed_nominal"],
         )
         v_cmd = v_track + dv
         w_cmd = w_track + dw
@@ -234,7 +220,9 @@ class ResidualNavEnv(gym.Env):
             x, y, th = self._model.as_pose()
             from .path_utils import compute_path_context
 
-            self._last_ctx = compute_path_context((x, y, th), self._waypoints, (1.0, 2.0, 3.0))
+            self._last_ctx = compute_path_context(
+                (x, y, th), self._waypoints, (1.0, 2.0, 3.0)
+            )
         except Exception:
             self._last_ctx = None
 
@@ -336,9 +324,7 @@ class ResidualNavEnv(gym.Env):
         )
         self._prev_goal_dist = new_prev_goal
 
-        weights = self.reward_cfg.get(
-            "weights", {"progress": 1.0, "path": 0.2, "effort": 0.01, "sparse": 1.0}
-        )
+        weights = self.reward_cfg["weights"]
         total, contrib = apply_weights(terms, weights)
         # Pack for renderer/logging
         self._last_reward_terms = to_breakdown_dict(terms, weights, total, contrib)

@@ -67,25 +67,23 @@ class GridLidar:
         assert grid.ndim == 2 and grid.dtype == bool
         H, W = grid.shape
         res = self.res
-        x, y, theta = float(pose[0]), float(pose[1]), float(pose[2])
+        x, y, theta = pose[0], pose[1], pose[2]
 
         # If starting outside the map, return max range for all beams
         if not (0.0 <= x < W * res and 0.0 <= y < H * res):
             d = np.full((self.beams,), self.max_range, dtype=np.float64)
             return self._apply_noise_and_clip(d)
 
-        # Starting cell indices
+        # Starting cell indices (no clipping needed - position already validated)
         j0 = int(np.floor(x / res))
         i0 = int(np.floor(y / res))
-        j0 = int(np.clip(j0, 0, W - 1))
-        i0 = int(np.clip(i0, 0, H - 1))
 
         distances = np.empty((self.beams,), dtype=np.float64)
         # Precompute sin/cos per beam
         angles = theta + self._angle_offsets
 
         for k in range(self.beams):
-            phi = float(angles[k])
+            phi = angles[k]
             dirx = cos(phi)
             diry = sin(phi)
 
@@ -140,12 +138,12 @@ class GridLidar:
 
                 # Out of bounds -> return distance to boundary
                 if j < 0 or j >= W or i < 0 or i >= H:
-                    distances[k] = min(t, self.max_range)
+                    distances[k] = t
                     break
 
                 # Occupied cell -> hit
                 if grid[i, j]:
-                    distances[k] = min(t, self.max_range)
+                    distances[k] = t
                     break
             else:
                 # Range exceeded
@@ -160,4 +158,3 @@ class GridLidar:
         # Clip to [0, max_range]
         np.clip(dists, 0.0, self.max_range, out=dists)
         return dists
-

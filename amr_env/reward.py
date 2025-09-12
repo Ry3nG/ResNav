@@ -54,32 +54,30 @@ def compute_terms(
     ctx: Any = reward_cfg.get("_ctx")
     if ctx is None:
         ctx = compute_path_context((x, y, th), waypoints, (1.0, 2.0, 3.0))
-    lat_w = float(reward_cfg.get("path_penalty", {}).get("lateral_weight", 1.0))
-    head_w = float(reward_cfg.get("path_penalty", {}).get("heading_weight", 0.5))
+    lat_w = float(reward_cfg["path_penalty"]["lateral_weight"])
+    head_w = float(reward_cfg["path_penalty"]["heading_weight"])
     path_pen = -(lat_w * abs(ctx.d_lat) + head_w * abs(ctx.theta_err))
 
     # Effort on residual (relative to tracker)
-    look = float(robot_cfg.get("controller", {}).get("lookahead_m", 1.2))
-    v_nom = float(robot_cfg.get("controller", {}).get("speed_nominal", 1.0))
+    look = float(robot_cfg["controller"]["lookahead_m"])
+    v_nom = float(robot_cfg["controller"]["speed_nominal"])
     v_track, w_track = compute_u_track((x, y, th), waypoints, look, v_nom)
     dv = float(last_u[0] - v_track)
     dw = float(last_u[1] - w_track)
-    lam = reward_cfg.get(
-        "effort_penalty", {"lambda_v": 1.0, "lambda_w": 1.0, "lambda_jerk": 0.05}
-    )
+    lam = reward_cfg["effort_penalty"]
     effort = -(
-        float(lam.get("lambda_v", 1.0)) * abs(dv)
-        + float(lam.get("lambda_w", 1.0)) * abs(dw)
-        + float(lam.get("lambda_jerk", 0.05))
+        float(lam["lambda_v"]) * abs(dv)
+        + float(lam["lambda_w"]) * abs(dw)
+        + float(lam["lambda_jerk"])
         * (abs(last_u[0] - prev_u[0]) + abs(last_u[1] - prev_u[1]))
     )
 
     # Fill sparse after computing goal distance if episode ended
     if terminated or truncated:
-        s_cfg = reward_cfg.get("sparse", {})
-        goal_bonus = float(s_cfg.get("goal", 200.0))
-        coll_pen = float(s_cfg.get("collision", -200.0))
-        timeout_pen = float(s_cfg.get("timeout", -50.0))
+        s_cfg = reward_cfg["sparse"]
+        goal_bonus = float(s_cfg["goal"])
+        coll_pen = float(s_cfg["collision"])
+        timeout_pen = float(s_cfg["timeout"])
 
         if terminated and goal_dist_t < 0.5:
             sparse = goal_bonus  # Goal reached

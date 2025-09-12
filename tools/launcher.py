@@ -91,42 +91,46 @@ def detect_run_dir_from_model(model_path: str) -> str:
     return str(p.parent)
 
 
-def load_config_groups(run_dir: str) -> Dict[str, str] | None:
-    """Load Hydra config group overrides to show which configs were used."""
-    rd = Path(run_dir)
-    overrides_file = rd / ".hydra" / "overrides.yaml"
-    try:
-        if overrides_file.exists():
-            overrides = load_yaml_any(str(overrides_file))
-            if isinstance(overrides, list):
-                groups = {}
-                for override in overrides:
-                    if (
-                        isinstance(override, str)
-                        and "=" in override
-                        and not override.startswith("run.")
-                    ):
-                        key, value = override.split("=", 1)
-                        groups[key] = value
-                return groups
-    except Exception:
-        pass
-    return None
+def load_config_groups(run_dir: str) -> Dict[str, str]:
+    """Parse config group overrides used for a run.
+
+    Returns an empty dict if no overrides are present or format is unexpected.
+    """
+    overrides_file = Path(run_dir) / ".hydra" / "overrides.yaml"
+    if not overrides_file.is_file():
+        return {}
+
+    overrides = load_yaml_any(str(overrides_file))
+    if not isinstance(overrides, list):
+        return {}
+
+    groups: Dict[str, str] = {}
+    for override in overrides:
+        if (
+            isinstance(override, str)
+            and "=" in override
+            and not override.startswith("run.")
+        ):
+            key, value = override.split("=", 1)
+            groups[key] = value
+    return groups
 
 
-def load_run_config(run_dir: str) -> Dict[str, Any] | None:
-    """Load resolved config from a run directory."""
+def load_run_config(run_dir: str) -> Dict[str, Any]:
+    """Load resolved config for a run.
+
+    Prefers `resolved.yaml` (if exported), otherwise falls back to Hydra config.
+    Returns an empty dict if neither exists.
+    """
     rd = Path(run_dir)
     resolved = rd / "resolved.yaml"
     hydra_cfg = rd / ".hydra" / "config.yaml"
-    try:
-        if resolved.exists():
-            return load_yaml(str(resolved))
-        if hydra_cfg.exists():
-            return load_yaml(str(hydra_cfg))
-    except Exception:
-        return None
-    return None
+
+    if resolved.is_file():
+        return load_yaml(str(resolved))
+    if hydra_cfg.is_file():
+        return load_yaml(str(hydra_cfg))
+    return {}
 
 
 def display_model_config(model_path: str) -> None:
@@ -142,18 +146,19 @@ def display_model_config(model_path: str) -> None:
     print("🔧 TRAINING CONFIGURATION")
     print("=" * 60)
 
-    if overrides_file.exists():
+    if overrides_file.is_file():
         try:
             overrides = load_yaml_any(str(overrides_file))
-            if isinstance(overrides, list):
-                print("📋 Configuration overrides:")
-                for override in overrides:
-                    print(f"   • {override}")
-                print()
-            else:
-                print(f"[WARN] Unexpected overrides.yaml format: {type(overrides)}")
-        except Exception as e:
+        except Exception as e:  # keep resilient output; no silent swallow
             print(f"[WARN] Could not load overrides.yaml: {e}")
+            overrides = None
+        if isinstance(overrides, list):
+            print("📋 Configuration overrides:")
+            for override in overrides:
+                print(f"   • {override}")
+            print()
+        elif overrides is not None:
+            print(f"[WARN] Unexpected overrides.yaml format: {type(overrides)}")
 
     # Show config groups used
     config_groups = load_config_groups(run_dir)
@@ -165,15 +170,12 @@ def display_model_config(model_path: str) -> None:
 
     # Show training details
     cfg = load_run_config(run_dir)
-    if isinstance(cfg, dict):
-        print("📊 Training details:")
-        run_info = cfg.get("run", {})
-        print(f"   • Total timesteps: {run_info.get('total_timesteps', 'unknown')}")
-        print(f"   • Vec envs: {run_info.get('vec_envs', 'unknown')}")
-        print(f"   • Seed: {run_info.get('seed', 'unknown')}")
-        print(f"   • DT: {run_info.get('dt', 'unknown')}")
-    else:
-        print(f"[WARN] Could not load config from {run_dir}")
+    print("📊 Training details:")
+    run_info = cfg.get("run", {}) if isinstance(cfg, dict) else {}
+    print(f"   • Total timesteps: {run_info.get('total_timesteps', 'unknown')}")
+    print(f"   • Vec envs: {run_info.get('vec_envs', 'unknown')}")
+    print(f"   • Seed: {run_info.get('seed', 'unknown')}")
+    print(f"   • DT: {run_info.get('dt', 'unknown')}")
 
     print("=" * 60)
     print()  # Blank line for readability
@@ -259,7 +261,7 @@ def build_render_command() -> Tuple[str, str]:
     output_path = output_dir / record_name
 
     cmd = (
-        f"python training/rollout.py --agent ppo --model '{model_path}' --record '{output_path}' "
+        f"python training/rollout.py --model '{model_path}' --record '{output_path}' "
         f"--steps {steps} --deterministic --seed {seed}"
     )
     return ("render", cmd)

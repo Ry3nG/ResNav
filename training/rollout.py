@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 from amr_env.gym.residual_nav_env import ResidualNavEnv
-from amr_env.gym.wrappers import DictFrameStackVec
+from amr_env.gym.wrappers import LidarFrameStackVec
 from visualization.pygame_renderer import Renderer, VizConfig
 from visualization.video import save_mp4
 from control.pure_pursuit import compute_u_track
@@ -126,11 +126,10 @@ def main():
     parser.add_argument("--run_cfg", type=str, default="configs/run/default.yaml")
     parser.add_argument("--vecnorm", type=str, default="")
     parser.add_argument("--deterministic", action="store_true")
-    parser.add_argument("--agent", choices=["ppo", "pp", "dwa"], default="ppo")
 
     args = parser.parse_args()
 
-    if args.agent == "ppo" and args.model:
+    if args.model:
         # Allow passing a directory containing the model and vecnorm
         model_zip, vecnorm_pkl, run_dir = resolve_model_and_vecnorm(args.model)
         # Load run config if available
@@ -170,56 +169,45 @@ def main():
         e = ResidualNavEnv(env_cfg, robot_cfg, reward_cfg, run_cfg)
         return e
 
-    base_env = None
-    obs = None
-    if args.agent == "ppo" and (args.model or args.vecnorm):
-        venv = DummyVecEnv([make_env])
-        # Apply the same frame-stack wrapper as training
-        fs_cfg = env_cfg.get("wrappers", {}).get("frame_stack", {})
-        k = int(fs_cfg.get("k", 4))
-        flatten = bool(fs_cfg.get("flatten", True))
-        if k > 1:
-            venv = DictFrameStackVec(
-                venv, keys=["lidar"], k=k, flatten=flatten, latest_first=True
-            )
-        # Load VecNormalize stats if provided or auto-detected
-        vecnorm_path = args.vecnorm or auto_vecnorm
-        if vecnorm_path:
-            print(f"[INFO] Loading VecNormalize stats: {vecnorm_path}")
-            venv = VecNormalize.load(vecnorm_path, venv)
-            venv.training = False
-            venv.norm_reward = False
-        else:
-            print(
-                "[WARN] No VecNormalize stats found; using raw observations for playback"
-            )
-        # Ensure deterministic environment setup when a seed is provided
-        try:
-            obs = venv.reset(seed=int(args.seed))
-        except TypeError:
-            # Fallback for older gym versions without seed kwarg
-            try:
-                venv.seed(int(args.seed))
-            except Exception:
-                pass
-            obs = venv.reset()
-        base_env = venv.envs[0]
-        if args.model:
-            model = PPO.load(args.model, env=venv, print_system_info=False)
+    venv = DummyVecEnv([make_env])
+    # Apply the same frame-stack wrapper as training
+    fs_cfg = env_cfg["wrappers"]["frame_stack"]
+    k = int(fs_cfg["k"])
+    if k > 1:
+        venv = LidarFrameStackVec(venv, k=k)
+    # Load VecNormalize stats if provided or auto-detected
+    vecnorm_path = args.vecnorm or auto_vecnorm
+    if vecnorm_path:
+        print(f"[INFO] Loading VecNormalize stats: {vecnorm_path}")
+        venv = VecNormalize.load(vecnorm_path, venv)
+        venv.training = False
+        venv.norm_reward = False
     else:
-        base_env = make_env()
-        obs, _ = base_env.reset(seed=args.seed)
+        print("[WARN] No VecNormalize stats found; using raw observations for playback")
+    # Ensure deterministic environment setup when a seed is provided
+    try:
+        obs = venv.reset(seed=int(args.seed))
+    except TypeError:
+        # Fallback for older gym versions without seed kwarg
+        try:
+            venv.seed(int(args.seed))
+        except Exception:
+            pass
+        obs = venv.reset()
+    base_env = venv.envs[0]
+    if args.model:
+        model = PPO.load(args.model, env=venv, print_system_info=False)
 
     frames = []
     if args.render or args.record:
         map_size = env_cfg["map"]["size_m"]
-        viz = env_cfg.get("viz", {})
+        viz = env_cfg["viz"]
         vcfg = VizConfig(
             size_px=(800, 800),
-            show_inflated=bool(viz.get("show_inflated", True)),
-            show_lidar=bool(viz.get("show_lidar", True)),
-            show_actions=bool(viz.get("show_actions", True)),
-            fps=int(viz.get("fps", 20)),
+            show_inflated=bool(viz["show_inflated"]),
+            show_lidar=bool(viz["show_lidar"]),
+            show_actions=bool(viz["show_actions"]),
+            fps=int(viz["fps"]),
         )
         renderer = Renderer(
             map_size, base_env.resolution_m, viz_cfg=vcfg, display=bool(args.render)
@@ -227,18 +215,11 @@ def main():
 
     # Rollout
     for t in range(args.steps):
-        if args.agent == "ppo" and (args.model or args.vecnorm):
-            action, _ = model.predict(obs, deterministic=bool(args.deterministic))
-            obs, reward, done, info = venv.step(action)
-            # VecEnv API (Gymnasium compatibility in our wrappers): done is array-like
-            if np.any(done):
-                break
-        else:
-            u_track = compute_u_track(base_env.robot_state, base_env.path_preview)
-            action = np.array(u_track, dtype=np.float32)
-            obs, reward, terminated, truncated, info = base_env.step(action)
-            if terminated or truncated:
-                break
+        action, _ = model.predict(obs, deterministic=bool(args.deterministic))
+        obs, reward, done, info = venv.step(action)
+        # VecEnv API (Gymnasium compatibility in our wrappers): done is array-like
+        if np.any(done):
+            break
         if args.render or args.record:
             # VecEnv returns a list of infos; unwrap for single-env DummyVecEnv
             info_dict = info[0] if isinstance(info, (list, tuple)) else info
@@ -254,7 +235,7 @@ def main():
             reward_breakdown = None
             if isinstance(rt, dict) and rt:
                 try:
-                    lines = {"R_total": float(rt.get("total", 0.0))}
+                    lines = {"R_total": float(rt["total"])}
                     contrib = rt.get("contrib", {}) or {}
                     # sort by absolute contribution descending
                     for k, v in sorted(
@@ -264,54 +245,56 @@ def main():
                     reward_breakdown = lines
                 except Exception:
                     reward_breakdown = None
-            
+
             # Extract lidar data for rendering
             obs_data = payload.get("obs", {})
             lidar_ranges = obs_data.get("lidar", np.array([]))
             lidar_cfg = payload.get("lidar", {})
-            
+
             # Build lidar tuple if data available
             lidar_data = None
             if len(lidar_ranges) > 0 and lidar_cfg:
                 lidar_data = (
                     lidar_ranges,
-                    lidar_cfg.get("beams", 24),
-                    lidar_cfg.get("fov_rad", np.radians(240)),
-                    lidar_cfg.get("max_range", 4.0)
+                    lidar_cfg["beams"],
+                    lidar_cfg["fov_rad"],
+                    lidar_cfg["max_range"],
                 )
-            
+
             # Extract action data for rendering
             actions_data = None
-            last_u = payload.get("last_u", np.array([0.0, 0.0]))
-            prev_u = payload.get("prev_u", np.array([0.0, 0.0]))
+            last_u = payload["last_u"]
+            prev_u = payload["prev_u"]
             if len(last_u) >= 2 and len(prev_u) >= 2:
                 # Compute u_track for reference
                 from control.pure_pursuit import compute_u_track
+
                 pose = payload["pose"]
                 waypoints = payload.get("waypoints", np.array([]))
                 if len(waypoints) > 0:
                     # Use robot config for lookahead and speed parameters
                     controller_cfg = robot_cfg.get("controller", {})
-                    lookahead_m = controller_cfg.get("lookahead_m", 1.0)
-                    v_nominal = controller_cfg.get("speed_nominal", 0.5)
+                    lookahead_m = controller_cfg["lookahead_m"]
+                    v_nominal = controller_cfg["speed_nominal"]
                     u_track = compute_u_track(pose, waypoints, lookahead_m, v_nominal)
                     du = last_u - np.array(u_track)
                     actions_data = (tuple(u_track), tuple(du), tuple(last_u))
-            
+
             frame = renderer.render_frame(
                 raw_grid=payload["raw_grid"],
                 inflated_grid=payload.get("inflated_grid"),
-                pose=payload["pose"], 
+                pose=payload["pose"],
                 radius_m=payload["radius_m"],
                 lidar=lidar_data,
                 path=payload.get("waypoints"),
                 actions=actions_data,
-                hud=reward_breakdown
+                hud=reward_breakdown,
             )
             if args.record:
                 # Convert pygame Surface to numpy array immediately
                 try:
                     import pygame
+
                     arr = pygame.surfarray.array3d(frame).transpose(1, 0, 2)
                     frames.append(arr)
                 except Exception as e:
@@ -322,7 +305,7 @@ def main():
     if args.record and len(frames) > 0:
         out = Path(args.record)
         out.parent.mkdir(parents=True, exist_ok=True)
-        fps_out = int(env_cfg.get("viz", {}).get("fps", 20))
+        fps_out = int(env_cfg["viz"]["fps"])
         save_mp4(frames, str(out), fps=fps_out)
         print(f"Saved video with {len(frames)} frames to: {out}")
 

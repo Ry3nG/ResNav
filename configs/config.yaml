@@ -4,12 +4,12 @@ defaults:
   - reward: default
   - algo: ppo
   - network: default
-  - curriculum: default
   - wandb: default
   - _self_
 
 run:
   dt: 0.1  # 10 Hz control & LiDAR
+  max_steps: 600
   vec_envs: 16
   total_timesteps: 1_000_000
   eval_interval_episodes: 50
