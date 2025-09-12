@@ -7,7 +7,7 @@ schema to expose breakdowns for logging and visualization.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 
 import numpy as np
 
@@ -50,7 +50,10 @@ def compute_terms(
     progress = d_prev - goal_dist_t
 
     # Path penalty via path context
-    ctx = compute_path_context((x, y, th), waypoints, (1.0, 2.0, 3.0))
+    # Allow caller to pass a cached context via reward_cfg["_ctx"] to avoid recompute
+    ctx: Any = reward_cfg.get("_ctx")
+    if ctx is None:
+        ctx = compute_path_context((x, y, th), waypoints, (1.0, 2.0, 3.0))
     lat_w = float(reward_cfg.get("path_penalty", {}).get("lateral_weight", 1.0))
     head_w = float(reward_cfg.get("path_penalty", {}).get("heading_weight", 0.5))
     path_pen = -(lat_w * abs(ctx.d_lat) + head_w * abs(ctx.theta_err))
@@ -103,17 +106,14 @@ def apply_weights(
 
     Returns (total, contrib_dict)
     """
-    w_progress = float(weights.get("progress", 1.0))
-    w_path = float(weights.get("path", 0.2))
-    w_effort = float(weights.get("effort", 0.01))
-    w_sparse = float(weights.get("sparse", 1.0))
-
-    contrib = {
-        "progress": w_progress * terms.progress,
-        "path": w_path * terms.path,
-        "effort": w_effort * terms.effort,
-        "sparse": w_sparse * terms.sparse,
-    }
+    # Build contributions generically from provided weights and available raw terms
+    raw = asdict(terms)
+    contrib: Dict[str, float] = {}
+    for k, w in weights.items():
+        try:
+            contrib[k] = float(w) * float(raw.get(k, 0.0))
+        except Exception:
+            contrib[k] = 0.0
     total = float(sum(contrib.values()))
     # Sanitize in case of NaN/inf
     total = float(np.nan_to_num(total))
@@ -129,6 +129,7 @@ def to_breakdown_dict(
 ) -> Dict[str, object]:
     """Pack a standardized reward_terms dict for logging/visualization."""
     return {
+        "version": "1.0",
         "raw": asdict(terms),
         "weights": {k: float(v) for k, v in weights.items()},
         "contrib": contrib,

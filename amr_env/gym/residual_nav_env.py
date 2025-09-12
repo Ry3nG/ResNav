@@ -229,6 +229,15 @@ class ResidualNavEnv(gym.Env):
             terminated = True
             done = True
 
+        # Compute path context once for this new state (reuse in reward + obs)
+        try:
+            x, y, th = self._model.as_pose()
+            from .path_utils import compute_path_context
+
+            self._last_ctx = compute_path_context((x, y, th), self._waypoints, (1.0, 2.0, 3.0))
+        except Exception:
+            self._last_ctx = None
+
         # Reward
         reward = self._compute_reward(goal_dist, terminated, truncated)
 
@@ -272,10 +281,13 @@ class ResidualNavEnv(gym.Env):
             dtype=np.float32,
         )
 
-        # Cache path context to avoid recomputation in reward
-        self._last_ctx = compute_path_context(
-            (x, y, th), self._waypoints, (1.0, 2.0, 3.0)
-        )
+        # Path context: reuse if already computed this step, else compute now
+        if getattr(self, "_last_ctx", None) is None:
+            from .path_utils import compute_path_context
+
+            self._last_ctx = compute_path_context(
+                (x, y, th), self._waypoints, (1.0, 2.0, 3.0)
+            )
         path = np.array(
             [
                 self._last_ctx.d_lat,
@@ -308,6 +320,9 @@ class ResidualNavEnv(gym.Env):
         self, goal_dist_t: float, terminated: bool, truncated: bool = False
     ) -> float:
         # Compute raw terms using the reward module (includes sparse decision)
+        # Pass cached context via reward_cfg to avoid recomputing inside reward module
+        reward_cfg_with_ctx = dict(self.reward_cfg)
+        reward_cfg_with_ctx["_ctx"] = getattr(self, "_last_ctx", None)
         terms, new_prev_goal = compute_terms(
             self._model.as_pose(),
             self._waypoints,
@@ -315,7 +330,7 @@ class ResidualNavEnv(gym.Env):
             self._last_u,
             self._prev_u,
             self.robot_cfg,
-            self.reward_cfg,
+            reward_cfg_with_ctx,
             terminated,
             truncated,
         )
