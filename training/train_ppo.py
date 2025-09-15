@@ -18,9 +18,10 @@ from training.callbacks import (
 )
 
 from training.env_factory import make_vec_envs
+from training.feature_extractors import LiDAR1DConvExtractor
 
 
-def build_policy_kwargs(policy_cfg: Dict[str, Any]) -> Dict[str, Any]:
+def build_policy_kwargs(policy_cfg: Dict[str, Any], env_cfg: Dict[str, Any]) -> Dict[str, Any]:
     # Map simple config to SB3 net_arch (new format for SB3 v1.8.0+)
     actor_sizes = policy_cfg["actor"]["hidden_sizes"]
     critic_sizes = policy_cfg["critic"]["hidden_sizes"]
@@ -36,7 +37,23 @@ def build_policy_kwargs(policy_cfg: Dict[str, Any]) -> Dict[str, Any]:
         "leaky_relu": nn.LeakyReLU,
     }
     activation_fn = act_map.get(act_name, nn.ReLU)
-    return {"net_arch": net_arch, "activation_fn": activation_fn}
+    kwargs: Dict[str, Any] = {"net_arch": net_arch, "activation_fn": activation_fn}
+    # Optional custom feature extractor for LiDAR
+    fe_cfg = policy_cfg.get("feature_extractor", {})
+    if isinstance(fe_cfg, dict) and fe_cfg.get("lidar_branch", "mlp") == "cnn1d":
+        k = int(fe_cfg.get("lidar_k", env_cfg["wrappers"]["frame_stack"]["k"]))
+        beams = int(fe_cfg.get("lidar_beams", env_cfg["lidar"]["beams"]))
+        kwargs["features_extractor_class"] = LiDAR1DConvExtractor
+        kwargs["features_extractor_kwargs"] = {
+            "lidar_k": k,
+            "lidar_beams": beams,
+            "lidar_channels": list(fe_cfg.get("lidar_channels", [16, 32, 16])),
+            "kernel_sizes": list(fe_cfg.get("kernel_sizes", [3, 5, 3])),
+            "out_dim": int(fe_cfg.get("out_dim", 128)),
+            "kin_dim": int(fe_cfg.get("kin_dim", 16)),
+            "path_dim": int(fe_cfg.get("path_dim", 16)),
+        }
+    return kwargs
 
 
 @hydra.main(config_path="../configs", config_name="config", version_base=None)
@@ -148,7 +165,7 @@ def main(cfg: DictConfig) -> None:
     except Exception:
         pass
 
-    policy_kwargs = build_policy_kwargs(network_cfg)
+    policy_kwargs = build_policy_kwargs(network_cfg, env_cfg)
 
     model = PPO(
         policy="MultiInputPolicy",
