@@ -206,7 +206,9 @@ def build_train_command() -> Tuple[str, str]:
         f"run.total_timesteps={timesteps}",
         f"run.seed={seed}",
     ]
-    cmd = f"python training/train_ppo.py {' '.join(overrides)}"
+    # Route to algorithm-specific trainer
+    script = "training/train_ppo.py" if algo == "ppo" else "training/train_sac.py"
+    cmd = f"python {script} {' '.join(overrides)}"
     return ("train", cmd)
 
 

@@ -76,9 +76,7 @@ class ResidualNavEnv(gym.Env):
         )
         obs_kin = spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32)
         # Path space bounds: reasonable physical limits
-        d_lat_bound = float(
-            self.env_cfg["map"]["corridor_width_m"][1]
-        )
+        d_lat_bound = float(self.env_cfg["map"]["corridor_width_m"][1])
         theta_bound = float(np.pi)
         preview_bound = 10.0
         low_path = np.array(
@@ -138,7 +136,6 @@ class ResidualNavEnv(gym.Env):
             self.seed(seed)
 
         # Sample scenario and ensure start pose is free in inflated grid
-        safety_margin = float(self.robot_cfg["safety_margin_m"])
         max_tries = 20
         for _ in range(max_tries):
             (
@@ -149,7 +146,7 @@ class ResidualNavEnv(gym.Env):
                 self._info,
             ) = self.scenarios.sample()
             self._grid_inflated = inflate_grid(
-                self._grid_raw, self.radius_m + safety_margin, self.resolution_m
+                self._grid_raw, self.radius_m, self.resolution_m
             )
             if not self._point_in_inflated(self._start_pose[0], self._start_pose[1]):
                 break

@@ -3,12 +3,6 @@ w_max: 2.0
 v_min: 0.0
 radius_m: 0.25
 controller:
-  type: pure_pursuit
   lookahead_m: 1.2
   speed_nominal: 1.0
 
-residual:
-  mode: full  # full control over final (clip only to bounds)
-
-# Optional safety margin used only for collision grid inflation (not a safety layer)
-safety_margin_m: 0.0
