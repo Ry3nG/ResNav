@@ -6,9 +6,14 @@ import argparse
 from typing import Any, Dict
 
 import numpy as np
-from omegaconf import OmegaConf
 import os
 from pathlib import Path
+
+from amr_env.utils import (
+    detect_run_root,
+    load_config_dict,
+    load_resolved_run_config,
+)
 
 from amr_env.gym.residual_nav_env import ResidualNavEnv
 from amr_env.gym.wrappers import LidarFrameStackVec
@@ -17,53 +22,6 @@ from visualization.video import save_mp4
 from control.pure_pursuit import compute_u_track
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3 import PPO, SAC
-
-
-def load_yaml(path: str) -> Dict[str, Any]:
-    cfg = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
-    assert isinstance(cfg, dict)
-    return cfg
-
-
-def detect_run_dir_from_model(model_path: str) -> str:
-    """
-    Detect run directory from model path.
-    """
-    p = Path(model_path).resolve()
-    if p.is_dir():
-        if p.name in ("best", "final"):
-            return str(p.parent)
-        if p.parent.name == "checkpoints":
-            return str(p.parent.parent)
-        return str(p)
-    if p.name == "best_model.zip" and p.parent.name == "best":
-        return str(p.parent.parent)
-    if p.name == "final_model.zip":
-        return str(p.parent)
-    if p.name == "model.zip" and p.parent.parent.name == "checkpoints":
-        return str(p.parent.parent.parent)
-    return str(p.parent)
-
-
-def load_run_config(run_dir: str) -> Dict[str, Any] | None:
-    rd = Path(run_dir)
-    resolved = rd / "resolved.yaml"
-    hydra_cfg = rd / ".hydra" / "config.yaml"
-    try:
-        from typing import Any as _Any
-        from omegaconf import OmegaConf as _OC
-
-        if resolved.exists():
-            cfg = _OC.to_container(_OC.load(str(resolved)), resolve=True)
-            return cfg if isinstance(cfg, dict) else None
-        if hydra_cfg.exists():
-            cfg = _OC.to_container(_OC.load(str(hydra_cfg)), resolve=True)
-            return cfg if isinstance(cfg, dict) else None
-    except Exception:
-        return None
-    return None
-
-
 def resolve_model_and_vecnorm(path: str) -> tuple[str, str | None, str]:
     """Given a directory or zip path, resolve (model_zip, vecnorm_pkl|None, run_dir).
 
@@ -103,7 +61,7 @@ def resolve_model_and_vecnorm(path: str) -> tuple[str, str | None, str]:
             raise SystemExit(
                 f"[ERR] No model zip found in directory: {p}\nSuggest one of: best/, final/, checkpoints/ckpt_step_N/"
             )
-        run_dir = detect_run_dir_from_model(str(p))
+        run_dir = detect_run_root(str(p))
     return (str(model_zip), str(vecnorm_pkl) if vecnorm_pkl else None, run_dir)
     raise SystemExit(f"[ERR] Unsupported path: {path}")
 
@@ -118,7 +76,7 @@ def detect_algo_from_run(run_dir: str) -> str:
       4) Default 'ppo'
     """
     # 1) Try resolved or hydra config
-    cfg = load_run_config(run_dir)
+    cfg = load_resolved_run_config(run_dir)
     try:
         if isinstance(cfg, dict) and "algo" in cfg and isinstance(cfg["algo"], dict):
             algo_block = cfg["algo"]
@@ -171,35 +129,35 @@ def main():
         # Allow passing a directory containing the model and vecnorm
         model_zip, vecnorm_pkl, run_dir = resolve_model_and_vecnorm(args.model)
         # Load run config if available
-        cfg = load_run_config(run_dir)
+        cfg = load_resolved_run_config(run_dir)
         env_cfg: Dict[str, Any] = (
             cfg["env"]
             if isinstance(cfg, dict) and "env" in cfg
-            else load_yaml(args.env_cfg)
+            else load_config_dict(args.env_cfg)
         )
         robot_cfg: Dict[str, Any] = (
             cfg["robot"]
             if isinstance(cfg, dict) and "robot" in cfg
-            else load_yaml(args.robot_cfg)
+            else load_config_dict(args.robot_cfg)
         )
         reward_cfg: Dict[str, Any] = (
             cfg["reward"]
             if isinstance(cfg, dict) and "reward" in cfg
-            else load_yaml(args.reward_cfg)
+            else load_config_dict(args.reward_cfg)
         )
         run_cfg: Dict[str, Any] = (
             cfg["run"]
             if isinstance(cfg, dict) and "run" in cfg
-            else load_yaml(args.run_cfg)
+            else load_config_dict(args.run_cfg)
         )
         # Prepare resolved paths for later loading
         args.model = model_zip
         auto_vecnorm = vecnorm_pkl or ""
     else:
-        env_cfg = load_yaml(args.env_cfg)
-        robot_cfg = load_yaml(args.robot_cfg)
-        reward_cfg = load_yaml(args.reward_cfg)
-        run_cfg = load_yaml(args.run_cfg)
+        env_cfg = load_config_dict(args.env_cfg)
+        robot_cfg = load_config_dict(args.robot_cfg)
+        reward_cfg = load_config_dict(args.reward_cfg)
+        run_cfg = load_config_dict(args.run_cfg)
         auto_vecnorm = ""
 
     # Build env factory so we can wrap with VecNormalize when needed

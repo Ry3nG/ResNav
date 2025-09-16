@@ -13,7 +13,14 @@ import os
 import sys
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
-from omegaconf import OmegaConf
+
+from amr_env.utils import (
+    detect_run_root,
+    load_config_any,
+    load_config_dict,
+    load_resolved_run_config,
+    read_run_overrides,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,73 +54,12 @@ def prompt_choice(title: str, options: List[str], default_idx: int = 0) -> str:
 def prompt_text(title: str, default: str = "") -> str:
     ans = input(f"{title} (default '{default}'): ").strip()
     return ans if ans else default
-
-
-def load_yaml(path: str) -> Dict[str, Any]:
-    cfg = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
-    assert isinstance(cfg, dict)
-    return cfg
-
-
-def load_yaml_any(path: str) -> Any:
-    """Load YAML file and return any type (list, dict, etc.)"""
-    return OmegaConf.to_container(OmegaConf.load(path), resolve=True)
-
-
-def detect_run_dir_from_model(model_path: str) -> str:
-    """Detect run directory from model path.
-
-    Supports inputs like:
-    - runs/T/best/                      (contains best_model.zip)
-    - runs/T/final/                     (contains final_model.zip)
-    - runs/T/checkpoints/ckpt_step_X/   (contains model.zip)
-    - corresponding .zip files directly (fallback)
-    """
-    p = Path(model_path).resolve()
-    # Prefer directory semantics (launcher passes directories)
-    if p.is_dir():
-        # best/ or final/ directories → run root is parent
-        if p.name in ("best", "final"):
-            return str(p.parent)
-        # checkpoints/ckpt_step_X/ → run root is parent of checkpoints
-        if p.parent.name == "checkpoints":
-            return str(p.parent.parent)
-        # Otherwise assume given directory is the run root
-        return str(p)
-
-    # Fallbacks for direct zip paths (robustness if ever passed a file)
-    if p.name == "best_model.zip" and p.parent.name == "best":
-        return str(p.parent.parent)
-    if p.name == "final_model.zip":
-        return str(p.parent)
-    if p.name == "model.zip" and p.parent.parent.name == "checkpoints":
-        return str(p.parent.parent.parent)
-    return str(p.parent)
-
-
 def load_config_groups(run_dir: str) -> Dict[str, str]:
     """Parse config group overrides used for a run.
 
     Returns an empty dict if no overrides are present or format is unexpected.
     """
-    overrides_file = Path(run_dir) / ".hydra" / "overrides.yaml"
-    if not overrides_file.is_file():
-        return {}
-
-    overrides = load_yaml_any(str(overrides_file))
-    if not isinstance(overrides, list):
-        return {}
-
-    groups: Dict[str, str] = {}
-    for override in overrides:
-        if (
-            isinstance(override, str)
-            and "=" in override
-            and not override.startswith("run.")
-        ):
-            key, value = override.split("=", 1)
-            groups[key] = value
-    return groups
+    return read_run_overrides(run_dir)
 
 
 def load_run_config(run_dir: str) -> Dict[str, Any]:
@@ -122,43 +68,33 @@ def load_run_config(run_dir: str) -> Dict[str, Any]:
     Prefers `resolved.yaml` (if exported), otherwise falls back to Hydra config.
     Returns an empty dict if neither exists.
     """
-    rd = Path(run_dir)
-    resolved = rd / "resolved.yaml"
-    hydra_cfg = rd / ".hydra" / "config.yaml"
-
-    if resolved.is_file():
-        return load_yaml(str(resolved))
-    if hydra_cfg.is_file():
-        return load_yaml(str(hydra_cfg))
-    return {}
+    return load_resolved_run_config(run_dir)
 
 
 def display_model_config(model_path: str) -> None:
     """Display configuration information for a model."""
-    run_dir = detect_run_dir_from_model(model_path)
+    run_dir = detect_run_root(model_path)
 
     print(f"[INFO] Detected run directory: {run_dir}")
 
     # Show complete configuration overrides
     rd = Path(run_dir)
-    overrides_file = rd / ".hydra" / "overrides.yaml"
     print("=" * 60)
     print("🔧 TRAINING CONFIGURATION")
     print("=" * 60)
 
-    if overrides_file.is_file():
-        try:
-            overrides = load_yaml_any(str(overrides_file))
-        except Exception as e:  # keep resilient output; no silent swallow
-            print(f"[WARN] Could not load overrides.yaml: {e}")
-            overrides = None
-        if isinstance(overrides, list):
-            print("📋 Configuration overrides:")
-            for override in overrides:
-                print(f"   • {override}")
-            print()
-        elif overrides is not None:
-            print(f"[WARN] Unexpected overrides.yaml format: {type(overrides)}")
+    overrides = None
+    try:
+        overrides = load_config_any(str(rd / ".hydra" / "overrides.yaml"))
+    except Exception as exc:  # keep resilient output; no silent swallow
+        print(f"[WARN] Could not load overrides.yaml: {exc}")
+    if isinstance(overrides, list):
+        print("📋 Configuration overrides:")
+        for override in overrides:
+            print(f"   • {override}")
+        print()
+    elif overrides is not None:
+        print(f"[WARN] Unexpected overrides.yaml format: {type(overrides)}")
 
     # Show config groups used
     config_groups = load_config_groups(run_dir)
@@ -258,7 +194,7 @@ def build_render_command() -> Tuple[str, str]:
         record_name += ".mp4"
 
     # Create output path in run directory
-    run_dir = detect_run_dir_from_model(model_path)
+    run_dir = detect_run_root(model_path)
     output_dir = Path(run_dir) / "outputs"
     output_path = output_dir / record_name
 

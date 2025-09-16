@@ -17,12 +17,12 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from amr_env.sim.dynamics import UnicycleModel, UnicycleState
-from amr_env.sim.scenario_manager import ScenarioManager
 from amr_env.sim.lidar import GridLidar
-from amr_env.sim.collision import inflate_grid
 from control.pure_pursuit import compute_u_track
-from .path_utils import compute_path_context
-from amr_env.reward import compute_terms, apply_weights, to_breakdown_dict, RewardTerms
+
+from .observation_builder import ObservationBuilder, ObservationData
+from .reward_manager import RewardManager
+from .scenario_service import ScenarioService, ScenarioSample
 
 
 class ResidualNavEnv(gym.Env):
@@ -40,9 +40,6 @@ class ResidualNavEnv(gym.Env):
         self.robot_cfg = robot_cfg
         self.reward_cfg = reward_cfg
         self.run_cfg = run_cfg
-
-        # Scenario manager
-        self.scenarios = ScenarioManager(env_cfg)
 
         # Robot limits
         self.v_max = float(robot_cfg["v_max"])
@@ -65,6 +62,13 @@ class ResidualNavEnv(gym.Env):
             noise_enable=bool(lidar_cfg["noise_enable"]),
             resolution_m=self.resolution_m,
         )
+
+        # Helper components
+        self._scenario_service = ScenarioService(
+            env_cfg, robot_radius_m=self.radius_m, resolution_m=self.resolution_m
+        )
+        self._obs_builder = ObservationBuilder(self.lidar)
+        self._reward_manager = RewardManager(robot_cfg, reward_cfg, self.dt)
 
         # Observation and action spaces
         n_beams = int(lidar_cfg["beams"])
@@ -110,29 +114,18 @@ class ResidualNavEnv(gym.Env):
         )
 
         # Internal state
-        self._grid_raw = None
-        self._grid_inflated = None
-        self._waypoints = None
-        self._start_pose = None
-        self._goal_xy = None
-        self._info = {}
-        self._model = None
+        self._scenario: ScenarioSample | None = None
+        self._model: UnicycleModel | None = None
         self._last_u = (0.0, 0.0)
         self._prev_u = (0.0, 0.0)
         self._steps = 0
         self._max_steps = int(run_cfg["max_steps"])
-        # Reward bookkeeping for renderer/debug
         self._last_reward_terms: Dict[str, Any] = {}
-        self._prev_goal_dist: float | None = None
-        # Deterministic clearance context (EDT + timing)
-        self._edt: np.ndarray | None = None
-        self._last_edt_ms: float = 0.0
-        # TTC plumbing (disabled by default in Phase I)
-        self._prev_true_ranges: np.ndarray | None = None
+        self._last_obs: Dict[str, np.ndarray] = {}
 
     def seed(self, seed: int | None = None):
         if seed is not None:
-            self.scenarios.set_seed(seed)
+            self._scenario_service.set_seed(seed)
             self.lidar.set_seed(seed)
 
     def reset(self, *, seed: int | None = None, options: Dict[str, Any] | None = None):
@@ -140,65 +133,38 @@ class ResidualNavEnv(gym.Env):
         if seed is not None:
             self.seed(seed)
 
-        # Clear episode-scoped helpers
-        self._edt = None
-        self._last_edt_ms = 0.0
-        self._prev_true_ranges = None
+        self._scenario = self._scenario_service.sample()
+        self._reward_manager.reset()
+        self._obs_builder.reset()
 
-        # Sample scenario and ensure start pose is free in inflated grid
-        max_tries = 20
-        for _ in range(max_tries):
-            (
-                self._grid_raw,
-                self._waypoints,
-                self._start_pose,
-                self._goal_xy,
-                self._info,
-            ) = self.scenarios.sample()
-            self._grid_inflated = inflate_grid(
-                self._grid_raw, self.radius_m, self.resolution_m
-            )
-            if not self._point_in_inflated(self._start_pose[0], self._start_pose[1]):
-                break
-
-        # Build Euclidean distance transform (meters) for deterministic clearance queries
-        try:
-            from .edt_utils import compute_edt_meters
-
-            free_mask = (~self._grid_inflated).astype(np.uint8)
-            self._edt, self._last_edt_ms = compute_edt_meters(
-                free_mask, self.resolution_m
-            )
-        except Exception:
-            self._edt, self._last_edt_ms = None, 0.0
-
-        # Init dynamics
         self._model = UnicycleModel(
             v_max=self.v_max, w_max=self.w_max, v_min=self.v_min
         )
-        x0, y0, th0 = self._start_pose
+        x0, y0, th0 = self._scenario.start_pose
         self._model.reset(UnicycleState(x0, y0, th0, 0.0, 0.0))
 
         self._prev_u = (0.0, 0.0)
         self._last_u = (0.0, 0.0)
         self._steps = 0
-        self._prev_goal_dist = None
         self._last_reward_terms = {}
+        self._last_obs = {}
 
-        obs = self._get_obs()
+        obs = self._build_observation().obs
         # Do not set SB3's episode info; RecordEpisodeStatistics will populate it
         return obs, {}
 
     def _clearance_iso(self) -> float:
         """Deterministic clearance via bilinear sampling over the EDT grid."""
-        if self._edt is None:
+        scenario = self._scenario
+        if scenario is None or scenario.edt is None:
             return 1e9
 
         x, y, _ = self._model.as_pose()
         i_f = y / self.resolution_m
         j_f = x / self.resolution_m
 
-        H, W = self._edt.shape
+        edt = scenario.edt
+        H, W = edt.shape
         if i_f < 0.0 or j_f < 0.0 or i_f >= H - 1 or j_f >= W - 1:
             return 0.0
 
@@ -207,10 +173,10 @@ class ResidualNavEnv(gym.Env):
         di = float(i_f - i0)
         dj = float(j_f - j0)
 
-        v00 = float(self._edt[i0, j0])
-        v01 = float(self._edt[i0, j0 + 1])
-        v10 = float(self._edt[i0 + 1, j0])
-        v11 = float(self._edt[i0 + 1, j0 + 1])
+        v00 = float(edt[i0, j0])
+        v01 = float(edt[i0, j0 + 1])
+        v10 = float(edt[i0 + 1, j0])
+        v11 = float(edt[i0 + 1, j0 + 1])
 
         v0 = v00 * (1.0 - dj) + v01 * dj
         v1 = v10 * (1.0 - dj) + v11 * dj
@@ -219,72 +185,76 @@ class ResidualNavEnv(gym.Env):
     # TODO: add front-arc sampling mode when safety.mode == "front_arc".
 
     def step(self, action: np.ndarray):
-        # Residual action
+        if self._scenario is None:
+            raise RuntimeError("Environment must be reset before stepping")
+
         dv, dw = float(action[0]), float(action[1])
 
-        # Base tracker command
+        lookahead = self.robot_cfg["controller"]["lookahead_m"]
+        v_nom = self.robot_cfg["controller"]["speed_nominal"]
         v_track, w_track = compute_u_track(
-            self._model.as_pose(),
-            self._waypoints,
-            self.robot_cfg["controller"]["lookahead_m"],
-            self.robot_cfg["controller"]["speed_nominal"],
+            self._model.as_pose(), self._scenario.waypoints, lookahead, v_nom
         )
-        v_cmd = v_track + dv
-        w_cmd = w_track + dw
-        # Clip to robot limits
-        v_cmd = float(np.clip(v_cmd, self.v_min, self.v_max))
-        w_cmd = float(np.clip(w_cmd, -self.w_max, self.w_max))
+        v_cmd = float(np.clip(v_track + dv, self.v_min, self.v_max))
+        w_cmd = float(np.clip(w_track + dw, -self.w_max, self.w_max))
 
         self._prev_u = self._last_u
         self._last_u = (v_cmd, w_cmd)
+        self._model.step((v_cmd, w_cmd), self.dt)
 
-        state = self._model.step((v_cmd, w_cmd), self.dt)
-
-        done = False
         terminated = False
         truncated = False
-        reward = 0.0
 
-        # Collision check on inflated grid
         if self._is_collision():
             terminated = True
-            done = True
 
-        # Timeout
         self._steps += 1
-        if self._steps >= self._max_steps and not done:
+        if self._steps >= self._max_steps and not terminated:
             truncated = True
-            done = True
 
-        # Goal reached
         goal_dist = self._dist_to_goal()
-        if goal_dist < 0.5 and not done:
+        if goal_dist < 0.5 and not (terminated or truncated):
             terminated = True
-            done = True
 
-        # Compute path context once for this new state (reuse in reward + obs)
-        try:
-            x, y, th = self._model.as_pose()
-            from .path_utils import compute_path_context
+        obs_data = self._build_observation()
 
-            self._last_ctx = compute_path_context(
-                (x, y, th), self._waypoints, (1.0, 2.0, 3.0)
+        safety_cfg = self.reward_cfg.get("safety") or {}
+        if not isinstance(safety_cfg, dict):
+            safety_cfg = {}
+        use_map_barrier = str(safety_cfg.get("source", "")).lower() == "map"
+        clearance = self._clearance_iso() if use_map_barrier else None
+        true_ranges = None
+        if use_map_barrier and bool(safety_cfg.get("ttc_enabled", False)):
+            true_ranges = self.lidar.sense(
+                self._scenario.grid_raw, self._model.as_pose(), noise=False
             )
-        except Exception:
-            self._last_ctx = None
 
-        # Reward
-        reward = self._compute_reward(goal_dist, terminated, truncated)
+        reward_result = self._reward_manager.compute(
+            self._model.as_pose(),
+            self._scenario.waypoints,
+            self._last_u,
+            self._prev_u,
+            terminated,
+            truncated,
+            obs_data.context,
+            clearance,
+            true_ranges,
+        )
 
-        obs = self._get_obs()
+        breakdown = dict(reward_result.breakdown)
+        breakdown.setdefault("metrics", {})
+        breakdown["metrics"]["edt_ms"] = float(self._scenario.edt_ms)
+        self._last_reward_terms = breakdown
+        self._reward_manager.update_last_breakdown(breakdown)
+        reward = float(reward_result.total)
+
+        obs = obs_data.obs
         info: Dict[str, Any] = {}
-        # Provide success flag on termination for eval metrics
         if terminated or truncated:
             info["is_success"] = bool(terminated and goal_dist < 0.5)
-            # Include reward breakdown at terminal steps for logging
-            if self._last_reward_terms:
-                info["reward_terms"] = self._last_reward_terms
-                metrics = self._last_reward_terms.get("metrics", {})
+            if breakdown:
+                info["reward_terms"] = breakdown
+                metrics = breakdown.get("metrics", {})
                 if metrics:
                     info.setdefault("metrics", {}).update(metrics)
         return obs, reward, terminated, truncated, info
@@ -292,9 +262,10 @@ class ResidualNavEnv(gym.Env):
     # Debug/visualization helper to avoid poking private fields externally
     def get_render_payload(self) -> Dict[str, Any]:
         pose = self._model.as_pose()
+        scenario = self._scenario
         payload = {
-            "raw_grid": self._grid_raw,
-            "inflated_grid": self._grid_inflated,
+            "raw_grid": None if scenario is None else scenario.grid_raw,
+            "inflated_grid": None if scenario is None else scenario.grid_inflated,
             "pose": pose,
             "radius_m": self.radius_m,
             "lidar": {
@@ -302,121 +273,48 @@ class ResidualNavEnv(gym.Env):
                 "fov_rad": self.lidar.fov_rad,
                 "max_range": self.lidar.max_range,
             },
-            "waypoints": self._waypoints,
+            "waypoints": None if scenario is None else scenario.waypoints,
             "last_u": self._last_u,
             "prev_u": self._prev_u,
-            "obs": self._get_obs(),  # returns current lidar/kin/path as well
-            "reward_terms": dict(getattr(self, "_last_reward_terms", {})),
+            "obs": self._last_obs if self._last_obs else self._get_obs(),
+            "reward_terms": dict(self._last_reward_terms),
+            "scenario_info": {} if scenario is None else dict(scenario.info),
         }
         return payload
 
     def _get_obs(self) -> Dict[str, np.ndarray]:
-        x, y, th = self._model.as_pose()
-        lidar = self.lidar.sense(self._grid_raw, (x, y, th)).astype(np.float32)
-
-        kin = np.array(
-            [self._last_u[0], self._last_u[1], self._prev_u[0], self._prev_u[1]],
-            dtype=np.float32,
-        )
-
-        # Path context: reuse if already computed this step, else compute now
-        if getattr(self, "_last_ctx", None) is None:
-            from .path_utils import compute_path_context
-
-            self._last_ctx = compute_path_context(
-                (x, y, th), self._waypoints, (1.0, 2.0, 3.0)
-            )
-        path = np.array(
-            [
-                self._last_ctx.d_lat,
-                self._last_ctx.theta_err,
-                *self._last_ctx.previews_robot.flatten().tolist(),
-            ],
-            dtype=np.float32,
-        )
-
-        return {"lidar": lidar, "kin": kin, "path": path}
+        return self._build_observation().obs
 
     def _is_collision(self) -> bool:
         x, y, _ = self._model.as_pose()
         return self._point_in_inflated(x, y)
 
     def _point_in_inflated(self, x: float, y: float) -> bool:
+        scenario = self._scenario
+        if scenario is None:
+            return False
+        grid = scenario.grid_inflated
         i = int(np.floor(y / self.resolution_m))
         j = int(np.floor(x / self.resolution_m))
-        H, W = self._grid_inflated.shape
+        H, W = grid.shape
         if i < 0 or i >= H or j < 0 or j >= W:
             return True
-        return bool(self._grid_inflated[i, j])
+        return bool(grid[i, j])
 
     def _dist_to_goal(self) -> float:
         x, y, _ = self._model.as_pose()
-        gx, gy = self._goal_xy
+        gx, gy = self._scenario.goal_xy
         return float(np.hypot(gx - x, gy - y))
 
-    def _compute_reward(
-        self, goal_dist_t: float, terminated: bool, truncated: bool = False
-    ) -> float:
-        # Compute raw terms using the reward module (includes sparse decision)
-        # Pass cached context via reward_cfg to avoid recomputing inside reward module
-        reward_cfg_with_ctx = dict(self.reward_cfg)
-        reward_cfg_with_ctx["_ctx"] = getattr(self, "_last_ctx", None)
-
-        safety_cfg = self.reward_cfg.get("safety") or {}
-        if not isinstance(safety_cfg, dict):
-            safety_cfg = {}
-        use_map_barrier = str(safety_cfg.get("source", "")).lower() == "map"
-
-        if use_map_barrier:
-            mode = str(safety_cfg.get("mode", "iso")).lower()
-            if mode == "iso":
-                d_min = self._clearance_iso()
-            else:
-                d_min = self._clearance_iso()
-            reward_cfg_with_ctx["_dmin"] = float(d_min)
-
-            ttc_enabled = bool(safety_cfg.get("ttc_enabled", False))
-            if ttc_enabled:
-                x, y, th = self._model.as_pose()
-                true_ranges = self.lidar.sense(
-                    self._grid_raw, (x, y, th), noise=False
-                )
-                reward_cfg_with_ctx["_true_ranges"] = true_ranges.astype(np.float32)
-                reward_cfg_with_ctx["_prev_true_ranges"] = (
-                    None
-                    if self._prev_true_ranges is None
-                    else self._prev_true_ranges.astype(np.float32)
-                )
-            else:
-                reward_cfg_with_ctx["_true_ranges"] = None
-                reward_cfg_with_ctx["_prev_true_ranges"] = None
-        else:
-            reward_cfg_with_ctx["_dmin"] = None
-            reward_cfg_with_ctx["_true_ranges"] = None
-            reward_cfg_with_ctx["_prev_true_ranges"] = None
-            ttc_enabled = False
-        reward_cfg_with_ctx["_dt"] = float(self.dt)
-
-        terms, new_prev_goal = compute_terms(
+    def _build_observation(self) -> ObservationData:
+        if self._scenario is None:
+            raise RuntimeError("Environment must be reset before building observations")
+        data = self._obs_builder.build(
+            self._scenario.grid_raw,
             self._model.as_pose(),
-            self._waypoints,
-            self._prev_goal_dist,
+            self._scenario.waypoints,
             self._last_u,
             self._prev_u,
-            self.robot_cfg,
-            reward_cfg_with_ctx,
-            terminated,
-            truncated,
         )
-        self._prev_goal_dist = new_prev_goal
-        if ttc_enabled:
-            self._prev_true_ranges = reward_cfg_with_ctx["_true_ranges"]
-
-        weights = self.reward_cfg["weights"]
-        total, contrib = apply_weights(terms, weights)
-        # Pack for renderer/logging
-        breakdown = to_breakdown_dict(terms, weights, total, contrib)
-        breakdown.setdefault("metrics", {})
-        breakdown["metrics"]["edt_ms"] = float(getattr(self, "_last_edt_ms", 0.0))
-        self._last_reward_terms = breakdown
-        return float(total)
+        self._last_obs = data.obs
+        return data
