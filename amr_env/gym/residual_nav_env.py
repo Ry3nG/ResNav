@@ -124,6 +124,11 @@ class ResidualNavEnv(gym.Env):
         # Reward bookkeeping for renderer/debug
         self._last_reward_terms: Dict[str, Any] = {}
         self._prev_goal_dist: float | None = None
+        # Deterministic clearance context (EDT + timing)
+        self._edt: np.ndarray | None = None
+        self._last_edt_ms: float = 0.0
+        # TTC plumbing (disabled by default in Phase I)
+        self._prev_true_ranges: np.ndarray | None = None
 
     def seed(self, seed: int | None = None):
         if seed is not None:
@@ -134,6 +139,11 @@ class ResidualNavEnv(gym.Env):
         super().reset(seed=seed)
         if seed is not None:
             self.seed(seed)
+
+        # Clear episode-scoped helpers
+        self._edt = None
+        self._last_edt_ms = 0.0
+        self._prev_true_ranges = None
 
         # Sample scenario and ensure start pose is free in inflated grid
         max_tries = 20
@@ -151,6 +161,17 @@ class ResidualNavEnv(gym.Env):
             if not self._point_in_inflated(self._start_pose[0], self._start_pose[1]):
                 break
 
+        # Build Euclidean distance transform (meters) for deterministic clearance queries
+        try:
+            from .edt_utils import compute_edt_meters
+
+            free_mask = (~self._grid_inflated).astype(np.uint8)
+            self._edt, self._last_edt_ms = compute_edt_meters(
+                free_mask, self.resolution_m
+            )
+        except Exception:
+            self._edt, self._last_edt_ms = None, 0.0
+
         # Init dynamics
         self._model = UnicycleModel(
             v_max=self.v_max, w_max=self.w_max, v_min=self.v_min
@@ -167,6 +188,35 @@ class ResidualNavEnv(gym.Env):
         obs = self._get_obs()
         # Do not set SB3's episode info; RecordEpisodeStatistics will populate it
         return obs, {}
+
+    def _clearance_iso(self) -> float:
+        """Deterministic clearance via bilinear sampling over the EDT grid."""
+        if self._edt is None:
+            return 1e9
+
+        x, y, _ = self._model.as_pose()
+        i_f = y / self.resolution_m
+        j_f = x / self.resolution_m
+
+        H, W = self._edt.shape
+        if i_f < 0.0 or j_f < 0.0 or i_f >= H - 1 or j_f >= W - 1:
+            return 0.0
+
+        i0 = int(np.floor(i_f))
+        j0 = int(np.floor(j_f))
+        di = float(i_f - i0)
+        dj = float(j_f - j0)
+
+        v00 = float(self._edt[i0, j0])
+        v01 = float(self._edt[i0, j0 + 1])
+        v10 = float(self._edt[i0 + 1, j0])
+        v11 = float(self._edt[i0 + 1, j0 + 1])
+
+        v0 = v00 * (1.0 - dj) + v01 * dj
+        v1 = v10 * (1.0 - dj) + v11 * dj
+        return float(v0 * (1.0 - di) + v1 * di)
+
+    # TODO: add front-arc sampling mode when safety.mode == "front_arc".
 
     def step(self, action: np.ndarray):
         # Residual action
@@ -234,6 +284,9 @@ class ResidualNavEnv(gym.Env):
             # Include reward breakdown at terminal steps for logging
             if self._last_reward_terms:
                 info["reward_terms"] = self._last_reward_terms
+                metrics = self._last_reward_terms.get("metrics", {})
+                if metrics:
+                    info.setdefault("metrics", {}).update(metrics)
         return obs, reward, terminated, truncated, info
 
     # Debug/visualization helper to avoid poking private fields externally
@@ -308,6 +361,42 @@ class ResidualNavEnv(gym.Env):
         # Pass cached context via reward_cfg to avoid recomputing inside reward module
         reward_cfg_with_ctx = dict(self.reward_cfg)
         reward_cfg_with_ctx["_ctx"] = getattr(self, "_last_ctx", None)
+
+        safety_cfg = self.reward_cfg.get("safety") or {}
+        if not isinstance(safety_cfg, dict):
+            safety_cfg = {}
+        use_map_barrier = str(safety_cfg.get("source", "")).lower() == "map"
+
+        if use_map_barrier:
+            mode = str(safety_cfg.get("mode", "iso")).lower()
+            if mode == "iso":
+                d_min = self._clearance_iso()
+            else:
+                d_min = self._clearance_iso()
+            reward_cfg_with_ctx["_dmin"] = float(d_min)
+
+            ttc_enabled = bool(safety_cfg.get("ttc_enabled", False))
+            if ttc_enabled:
+                x, y, th = self._model.as_pose()
+                true_ranges = self.lidar.sense(
+                    self._grid_raw, (x, y, th), noise=False
+                )
+                reward_cfg_with_ctx["_true_ranges"] = true_ranges.astype(np.float32)
+                reward_cfg_with_ctx["_prev_true_ranges"] = (
+                    None
+                    if self._prev_true_ranges is None
+                    else self._prev_true_ranges.astype(np.float32)
+                )
+            else:
+                reward_cfg_with_ctx["_true_ranges"] = None
+                reward_cfg_with_ctx["_prev_true_ranges"] = None
+        else:
+            reward_cfg_with_ctx["_dmin"] = None
+            reward_cfg_with_ctx["_true_ranges"] = None
+            reward_cfg_with_ctx["_prev_true_ranges"] = None
+            ttc_enabled = False
+        reward_cfg_with_ctx["_dt"] = float(self.dt)
+
         terms, new_prev_goal = compute_terms(
             self._model.as_pose(),
             self._waypoints,
@@ -320,9 +409,14 @@ class ResidualNavEnv(gym.Env):
             truncated,
         )
         self._prev_goal_dist = new_prev_goal
+        if ttc_enabled:
+            self._prev_true_ranges = reward_cfg_with_ctx["_true_ranges"]
 
         weights = self.reward_cfg["weights"]
         total, contrib = apply_weights(terms, weights)
         # Pack for renderer/logging
-        self._last_reward_terms = to_breakdown_dict(terms, weights, total, contrib)
+        breakdown = to_breakdown_dict(terms, weights, total, contrib)
+        breakdown.setdefault("metrics", {})
+        breakdown["metrics"]["edt_ms"] = float(getattr(self, "_last_edt_ms", 0.0))
+        self._last_reward_terms = breakdown
         return float(total)

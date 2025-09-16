@@ -58,7 +58,12 @@ class GridLidar:
     def set_seed(self, seed: int) -> None:
         self._rng = np.random.default_rng(seed)
 
-    def sense(self, grid: np.ndarray, pose: Tuple[float, float, float]) -> np.ndarray:
+    def sense(
+        self,
+        grid: np.ndarray,
+        pose: Tuple[float, float, float],
+        noise: bool | None = None,
+    ) -> np.ndarray:
         """Cast beams and return distances in meters.
 
         grid: 2D bool array, True=occupied.
@@ -72,7 +77,8 @@ class GridLidar:
         # If starting outside the map, return max range for all beams
         if not (0.0 <= x < W * res and 0.0 <= y < H * res):
             d = np.full((self.beams,), self.max_range, dtype=np.float64)
-            return self._apply_noise_and_clip(d)
+            apply_noise = self.noise_enable if noise is None else bool(noise)
+            return self._apply_noise_and_clip(d, apply_noise)
 
         # Starting cell indices (no clipping needed - position already validated)
         j0 = int(np.floor(x / res))
@@ -149,10 +155,11 @@ class GridLidar:
                 # Range exceeded
                 distances[k] = self.max_range
 
-        return self._apply_noise_and_clip(distances)
+        apply_noise = self.noise_enable if noise is None else bool(noise)
+        return self._apply_noise_and_clip(distances, apply_noise)
 
-    def _apply_noise_and_clip(self, dists: np.ndarray) -> np.ndarray:
-        if self.noise_enable and self.noise_std > 0.0:
+    def _apply_noise_and_clip(self, dists: np.ndarray, apply_noise: bool) -> np.ndarray:
+        if apply_noise and self.noise_std > 0.0:
             noise = self._rng.normal(loc=0.0, scale=self.noise_std, size=dists.shape)
             dists = dists + noise
         # Clip to [0, max_range]

@@ -76,6 +76,23 @@ def main(cfg: DictConfig) -> None:
     assert isinstance(reward_cfg, dict) and isinstance(algo_cfg, dict)
     assert isinstance(network_cfg, dict) and isinstance(wandb_cfg, dict)
 
+    algo_gamma = algo_cfg.get("gamma")
+    shaping_gamma = (
+        reward_cfg.get("shaping", {}).get("gamma")
+        if isinstance(reward_cfg.get("shaping"), dict)
+        else None
+    )
+    try:
+        if algo_gamma is not None and shaping_gamma is not None:
+            if abs(float(algo_gamma) - float(shaping_gamma)) > 1e-6:
+                print(
+                    "[warn] algo.gamma ({}) != reward.shaping.gamma ({}); potential shaping drift.".format(
+                        algo_gamma, shaping_gamma
+                    )
+                )
+    except Exception:
+        pass
+
     # Run configuration
     run_cfg = {"dt": float(cfg.run["dt"]), "max_steps": 600}
 
