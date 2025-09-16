@@ -83,11 +83,7 @@ def display_model_config(model_path: str) -> None:
     print("🔧 TRAINING CONFIGURATION")
     print("=" * 60)
 
-    overrides = None
-    try:
-        overrides = load_config_any(str(rd / ".hydra" / "overrides.yaml"))
-    except Exception as exc:  # keep resilient output; no silent swallow
-        print(f"[WARN] Could not load overrides.yaml: {exc}")
+    overrides = load_config_any(str(rd / ".hydra" / "overrides.yaml"))
     if isinstance(overrides, list):
         print("📋 Configuration overrides:")
         for override in overrides:

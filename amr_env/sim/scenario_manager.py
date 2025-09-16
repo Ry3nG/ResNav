@@ -16,7 +16,7 @@ from .scenarios import BlockageScenarioConfig, create_blockage_scenario
 class ScenarioManager:
     """Simple scenario manager for Phase I (blockage-only)."""
 
-    def __init__(self, env_cfg: Dict[str, Any]) -> None:
+    def __init__(self, env_cfg: Dict[str, Any], robot_radius_m: float | None = None) -> None:
         """Initialize with Hydra-like env config dictionary.
 
         Expected keys under env_cfg:
@@ -29,6 +29,11 @@ class ScenarioManager:
         """
         self.env_cfg = env_cfg
         self._rng = np.random.default_rng()
+        robot_cfg = env_cfg.get("robot", {}) if isinstance(env_cfg, dict) else {}
+        if robot_radius_m is not None:
+            self._robot_radius_m = float(robot_radius_m)
+        else:
+            self._robot_radius_m = float(robot_cfg.get("radius_m", 0.25))
 
     def set_seed(self, seed: int) -> None:
         self._rng = np.random.default_rng(seed)
@@ -104,8 +109,7 @@ class ScenarioManager:
         from .collision import inflate_grid
 
         # Create inflated grid for robot radius
-        robot_radius = 0.25  # Robot radius in meters
-        grid_inflated = inflate_grid(grid, robot_radius, resolution)
+        grid_inflated = inflate_grid(grid, self._robot_radius_m, resolution)
 
         start_x, start_y, _ = start_pose
         goal_x, goal_y = goal_xy
@@ -148,4 +152,3 @@ class ScenarioManager:
                     queue.append((ni, nj))
 
         return False
-

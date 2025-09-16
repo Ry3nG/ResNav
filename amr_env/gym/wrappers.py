@@ -50,8 +50,12 @@ class LidarFrameStackVec(VecEnvWrapper):
             deque(maxlen=self.k) for _ in range(self.num_envs)
         ]
 
-    def reset(self) -> Dict[str, np.ndarray]:
-        obs = self.venv.reset()
+    def reset(self, **kwargs) -> Dict[str, np.ndarray]:
+        out = self.venv.reset(**kwargs)
+        if isinstance(out, tuple) and len(out) == 2:
+            obs, _info = out
+        else:
+            obs = out
         assert isinstance(obs, dict)
         
         # Clear and seed buffers with initial lidar observations

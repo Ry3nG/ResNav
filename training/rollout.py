@@ -61,9 +61,14 @@ def resolve_model_and_vecnorm(path: str) -> tuple[str, str | None, str]:
             raise SystemExit(
                 f"[ERR] No model zip found in directory: {p}\nSuggest one of: best/, final/, checkpoints/ckpt_step_N/"
             )
-        run_dir = detect_run_root(str(p))
+    else:
+        raise SystemExit(f"[ERR] Unsupported path: {path}")
+
+    run_dir = detect_run_root(str(p))
+    if model_zip is None:
+        raise SystemExit(f"[ERR] Failed to locate model zip under: {p}")
+
     return (str(model_zip), str(vecnorm_pkl) if vecnorm_pkl else None, run_dir)
-    raise SystemExit(f"[ERR] Unsupported path: {path}")
 
 
 def detect_algo_from_run(run_dir: str) -> str:
@@ -181,15 +186,7 @@ def main():
     else:
         print("[WARN] No VecNormalize stats found; using raw observations for playback")
     # Ensure deterministic environment setup when a seed is provided
-    try:
-        obs = venv.reset(seed=int(args.seed))
-    except TypeError:
-        # Fallback for older gym versions without seed kwarg
-        try:
-            venv.seed(int(args.seed))
-        except Exception:
-            pass
-        obs = venv.reset()
+    obs = venv.reset(seed=int(args.seed))
     base_env = venv.envs[0]
     if args.model:
         # Detect algorithm used for this run
@@ -277,8 +274,14 @@ def main():
                     lookahead_m = controller_cfg["lookahead_m"]
                     v_nominal = controller_cfg["speed_nominal"]
                     u_track = compute_u_track(pose, waypoints, lookahead_m, v_nominal)
-                    du = last_u - np.array(u_track)
-                    actions_data = (tuple(u_track), tuple(du), tuple(last_u))
+                    last_u_arr = np.array(last_u, dtype=float)
+                    u_track_arr = np.array(u_track, dtype=float)
+                    du = last_u_arr - u_track_arr
+                    actions_data = (
+                        tuple(u_track_arr.tolist()),
+                        tuple(du.tolist()),
+                        tuple(last_u_arr.tolist()),
+                    )
 
             frame = renderer.render_frame(
                 raw_grid=payload["raw_grid"],

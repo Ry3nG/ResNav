@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.vec_env import VecNormalize
+import wandb
 
 
 class WandbEvalCallback(EvalCallback):
@@ -64,8 +65,6 @@ class WandbEvalCallback(EvalCallback):
                 }
                 if len(self._is_success_buffer) > 0:
                     logs["eval/success_rate"] = sum(self._is_success_buffer) / len(self._is_success_buffer)
-                
-                import wandb
                 self._wandb.log(logs)
 
         return continue_training
@@ -145,8 +144,6 @@ class CheckpointCallbackWithVecnorm(BaseCallback):
             }, f, indent=2)
 
     def _upload_to_wandb(self, model_path: str, vecnorm_path: Optional[str], step_dir: str) -> None:
-        import wandb
-        
         art = wandb.Artifact(f"checkpoint_step_{self.num_timesteps}", type="model")
         art.add_file(model_path + ".zip")
         if vecnorm_path and os.path.exists(vecnorm_path):
@@ -217,12 +214,9 @@ class RewardTermsLoggingCallback(BaseCallback):
         
         # Log to WandB
         if self._wandb is not None:
-            import wandb
-            
             data = {f"{self._prefix}/total": total}
             for category in ["contrib", "raw"]:
                 terms = reward_terms.get(category, {}) or {}
                 for k, v in terms.items():
                     data[f"{self._prefix}/{category}/{k}"] = float(v)
             self._wandb.log(data)
-

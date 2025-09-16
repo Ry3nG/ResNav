@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import atan2, cos, sin
-from typing import List, Tuple
+from math import atan2
+from typing import Tuple
 
 import numpy as np
 
@@ -104,3 +104,18 @@ def compute_path_context(
 
     return PathContext(d_lat=d_lat, theta_err=theta_err, previews_robot=previews_robot)
 
+
+def closest_and_lookahead(
+    pose: Tuple[float, float, float],
+    waypoints: np.ndarray,
+    lookahead_m: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return closest projection and lookahead waypoint along a polyline."""
+
+    x, y, _ = pose
+    p = np.array([float(x), float(y)], dtype=float)
+    s = _polyline_arclength(waypoints)
+    s_proj, proj, _, _ = _project_to_polyline(waypoints, p)
+    look_s = float(s_proj + float(lookahead_m))
+    lookahead = _point_at_arclength(waypoints, s, look_s)
+    return proj, lookahead

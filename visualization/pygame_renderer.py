@@ -17,11 +17,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 import numpy as np
-
-try:
-    import pygame
-except ImportError:  # pragma: no cover - renderer optional in headless CI
-    pygame = None
+import pygame
 
 
 @dataclass
@@ -60,10 +56,6 @@ class Renderer:
         viz_cfg: Optional[VizConfig] = None,
         display: bool = True,
     ) -> None:
-        if pygame is None:
-            raise RuntimeError(
-                "pygame not available; install pygame to use the renderer"
-            )
         self.viz = viz_cfg or VizConfig()
         self.colors = self.viz.colors
         self.map_w, self.map_h = float(map_size_m[0]), float(map_size_m[1])
