@@ -23,6 +23,25 @@ make amr
 ```
 The interactive launcher guides you to train and render models with sensible defaults.
 
+## Repository Layout
+
+```
+amr_env/                 # installable package (pip install -e .)
+├── control/             # classical controllers (pure pursuit, etc.)
+├── gym/                 # Gymnasium-facing wrappers and services
+├── planning/            # path geometry utilities (projection, previews)
+├── sim/                 # map/scenario generation, dynamics, LiDAR, EDT
+├── utils/               # config helpers, run discovery
+├── viz/                 # pygame renderer + video export
+└── reward.py            # reward math used by the env & logger
+
+training/                # SB3/Hydra training utilities (env factory, callbacks, feature extractors)
+tools/                   # CLI launcher and misc scripts
+configs/                 # Hydra config groups
+```
+
+> The `training/` and `tools/` folders stay top-level so Hydra and SB3 discover configs and scripts without extra package plumbing. Everything that defines the environment lives under `amr_env`.
+
 ## Configuration
 
 | Component | Config File | Description |
@@ -41,7 +60,7 @@ The interactive launcher guides you to train and render models with sensible def
 - kin: `(v_t, w_t, v_{t-1}, w_{t-1})`
 - path: `(d_lat, θ_err, 3× preview waypoints in robot frame)`
 
-### Reward Components (amr_env/reward.py)
+### Reward Components (`amr_env/reward.py`)
 - Progress: `d_{t-1} - d_t`
 - Path penalty: `-|d_lat| - 0.5|θ_err|`
 - Effort: `-λ_v|Δv| - λ_ω|Δω| - λ_jerk(|Δv|+|Δω|)`
@@ -59,5 +78,5 @@ Reward schema exposed per step (for HUD/logging):
   - final/: `final_model.zip` + `vecnorm_final.pkl`
   - checkpoints/ckpt_step_N/: `model.zip` + `vecnorm.pkl`
 - When rendering, the loader prefers `vecnorm_best.pkl` or `vecnorm_final.pkl`; otherwise falls back to `vecnorm.pkl` in checkpoints.
-- Renderer shows geometry overlays in physical units (meters/radians).
+- Renderer shows geometry overlays in physical units (meters/radians). Module path: `amr_env.viz.pygame_renderer.Renderer`.
 - Reward logs stream to TensorBoard by default and mirror to W&B when enabled.
