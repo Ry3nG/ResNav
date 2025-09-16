@@ -26,7 +26,7 @@ from .scenario_service import ScenarioService, ScenarioSample
 
 
 class ResidualNavEnv(gym.Env):
-    metadata = {"render.modes": ["human"]}
+    metadata = {"render_modes": ["human"]}
 
     def __init__(
         self,

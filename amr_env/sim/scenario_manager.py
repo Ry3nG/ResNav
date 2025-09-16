@@ -136,7 +136,16 @@ class ScenarioManager:
         queue = deque([(start_i, start_j)])
         visited[start_i, start_j] = True
 
-        directions = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+        directions = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ]
 
         while queue:
             i, j = queue.popleft()
@@ -146,9 +155,16 @@ class ScenarioManager:
 
             for di, dj in directions:
                 ni, nj = i + di, j + dj
-                if (0 <= ni < H and 0 <= nj < W and
-                    not visited[ni, nj] and not grid_inflated[ni, nj]):
-                    visited[ni, nj] = True
-                    queue.append((ni, nj))
+                if not (0 <= ni < H and 0 <= nj < W):
+                    continue
+                if visited[ni, nj] or grid_inflated[ni, nj]:
+                    continue
+                if di != 0 and dj != 0:
+                    adj1_i, adj1_j = i, nj
+                    adj2_i, adj2_j = ni, j
+                    if grid_inflated[adj1_i, adj1_j] or grid_inflated[adj2_i, adj2_j]:
+                        continue
+                visited[ni, nj] = True
+                queue.append((ni, nj))
 
         return False

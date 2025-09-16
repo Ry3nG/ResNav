@@ -69,7 +69,6 @@ def maybe_init_wandb(wandb_cfg: Dict[str, Any], extra_config: Dict[str, Any]):
         config=extra_config,
         tags=wandb_cfg.get("tags", []),
     )
-    wandb.tensorboard.patch(root_logdir="logs")
     return run
 
 

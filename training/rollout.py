@@ -22,6 +22,7 @@ from visualization.video import save_mp4
 from control.pure_pursuit import compute_u_track
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3 import PPO, SAC
+
 def resolve_model_and_vecnorm(path: str) -> tuple[str, str | None, str]:
     """Given a directory or zip path, resolve (model_zip, vecnorm_pkl|None, run_dir).
 
@@ -186,14 +187,25 @@ def main():
     else:
         print("[WARN] No VecNormalize stats found; using raw observations for playback")
     # Ensure deterministic environment setup when a seed is provided
-    obs = venv.reset(seed=int(args.seed))
-    base_env = venv.envs[0]
+    base_seed = int(args.seed)
+    if hasattr(venv, "seed"):
+        venv.seed(base_seed)
+    obs = venv.reset()
+
+    # Unwrap potential VecNormalize to reach underlying Dummy/Subproc env
+    base_env_ref = venv
+    while hasattr(base_env_ref, "venv"):
+        base_env_ref = base_env_ref.venv
+    base_env = base_env_ref.envs[0]
+    model = None
     if args.model:
         # Detect algorithm used for this run
         algo_name = detect_algo_from_run(run_dir)
         ModelClass = SAC if algo_name == "sac" else PPO
         print(f"[INFO] Detected algorithm: {algo_name.upper()} → using {ModelClass.__name__}")
         model = ModelClass.load(args.model, env=venv, print_system_info=False)
+    else:
+        print("[INFO] No model provided: using zero-residual (pure pursuit) for playback.")
 
     frames = []
     if args.render or args.record:
@@ -212,7 +224,10 @@ def main():
 
     # Rollout
     for t in range(args.steps):
-        action, _ = model.predict(obs, deterministic=bool(args.deterministic))
+        if model is not None:
+            action, _ = model.predict(obs, deterministic=bool(args.deterministic))
+        else:
+            action = np.zeros((venv.num_envs, 2), dtype=np.float32)
         obs, reward, done, info = venv.step(action)
         # VecEnv API (Gymnasium compatibility in our wrappers): done is array-like
         if np.any(done):

@@ -53,12 +53,10 @@ class UnicycleModel:
 
     @staticmethod
     def wrap_to_pi(theta: float) -> float:
-        """Normalize angle to [-pi, pi]."""
-        # Using modulo arithmetic to avoid drift
+        """Normalize angle to [-pi, pi)."""
         wrapped = (theta + pi) % (2.0 * pi) - pi
-        # Handle the edge-case of -pi vs pi consistently
-        if wrapped <= -pi:
-            wrapped += 2.0 * pi
+        if wrapped >= pi:
+            wrapped -= 2.0 * pi
         return wrapped
 
     def clip_action(self, u: Tuple[float, float]) -> Tuple[float, float]:

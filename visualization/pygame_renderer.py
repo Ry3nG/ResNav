@@ -13,7 +13,7 @@ Supports windowed (interactive) and headless modes. Returns frames for recording
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -45,7 +45,7 @@ class VizConfig:
     show_lidar: bool = True
     show_actions: bool = True
     fps: int = 20
-    colors: Colors = Colors()
+    colors: Colors = field(default_factory=Colors)
 
 
 class Renderer:
