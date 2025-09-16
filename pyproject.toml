@@ -14,8 +14,6 @@ dependencies = []
 [tool.setuptools.packages.find]
 include = [
   "amr_env*",
-  "control*",
   "training*",
-  "visualization*",
   "eval*"
 ]

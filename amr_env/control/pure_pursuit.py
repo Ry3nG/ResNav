@@ -11,7 +11,7 @@ from typing import Tuple
 
 import numpy as np
 
-from amr_env.gym.path_utils import closest_and_lookahead
+from amr_env.planning.path import closest_and_lookahead
 
 
 def compute_u_track(

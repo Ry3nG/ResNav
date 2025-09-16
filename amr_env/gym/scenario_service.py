@@ -58,7 +58,7 @@ class ScenarioService:
         )
 
     def _compute_edt(self, grid_inflated: np.ndarray) -> Tuple[np.ndarray | None, float]:
-        from .edt_utils import compute_edt_meters
+        from amr_env.sim.edt import compute_edt_meters
 
         free_mask = (~grid_inflated).astype(np.uint8)
         edt, ms = compute_edt_meters(free_mask, self._resolution)

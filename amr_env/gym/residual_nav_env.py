@@ -18,7 +18,7 @@ from gymnasium import spaces
 
 from amr_env.sim.dynamics import UnicycleModel, UnicycleState
 from amr_env.sim.lidar import GridLidar
-from control.pure_pursuit import compute_u_track
+from amr_env.control.pure_pursuit import compute_u_track
 
 from .observation_builder import ObservationBuilder, ObservationData
 from .reward_manager import RewardManager

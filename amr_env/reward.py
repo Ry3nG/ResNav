@@ -11,8 +11,8 @@ from typing import Dict, Tuple, Any
 
 import numpy as np
 
-from control.pure_pursuit import compute_u_track
-from amr_env.gym.path_utils import compute_path_context
+from amr_env.control.pure_pursuit import compute_u_track
+from amr_env.planning.path import compute_path_context
 
 
 @dataclass

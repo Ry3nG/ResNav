@@ -17,9 +17,9 @@ from amr_env.utils import (
 
 from amr_env.gym.residual_nav_env import ResidualNavEnv
 from amr_env.gym.wrappers import LidarFrameStackVec
-from visualization.pygame_renderer import Renderer, VizConfig
-from visualization.video import save_mp4
-from control.pure_pursuit import compute_u_track
+from amr_env.viz.pygame_renderer import Renderer, VizConfig
+from amr_env.viz.video import save_mp4
+from amr_env.control.pure_pursuit import compute_u_track
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3 import PPO, SAC
 
@@ -279,7 +279,7 @@ def main():
             prev_u = payload["prev_u"]
             if len(last_u) >= 2 and len(prev_u) >= 2:
                 # Compute u_track for reference
-                from control.pure_pursuit import compute_u_track
+                from amr_env.control.pure_pursuit import compute_u_track
 
                 pose = payload["pose"]
                 waypoints = payload.get("waypoints", np.array([]))

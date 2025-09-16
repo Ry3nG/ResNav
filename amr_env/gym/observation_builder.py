@@ -8,7 +8,7 @@ from typing import Dict, Tuple
 import numpy as np
 
 from amr_env.sim.lidar import GridLidar
-from .path_utils import compute_path_context, PathContext
+from amr_env.planning.path import compute_path_context, PathContext
 
 
 @dataclass
