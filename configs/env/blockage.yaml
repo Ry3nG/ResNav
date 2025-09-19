@@ -2,7 +2,7 @@
 name: blockage
 map:
   size_m: [20.0, 20.0]
-  resolution_m: 0.2
+  resolution_m: 0.05
   corridor_width_m: [3.0, 5.0]
   with_intersections: true
   blockage_prob: 0.6
