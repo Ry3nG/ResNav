@@ -5,8 +5,7 @@ For Phase I, samples blockage-only scenarios using BlockageScenarioConfig.
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 import numpy as np
 from collections import deque
 
@@ -14,9 +13,9 @@ from .scenarios import BlockageScenarioConfig, create_blockage_scenario
 
 
 class ScenarioManager:
-    """Simple scenario manager for Phase I (blockage-only)."""
+    """Simple scenario manager with lightweight scenario selection."""
 
-    def __init__(self, env_cfg: Dict[str, Any], robot_radius_m: float | None = None) -> None:
+    def __init__(self, env_cfg: dict[str, Any], robot_radius_m: float | None = None) -> None:
         """Initialize with Hydra-like env config dictionary.
 
         Expected keys under env_cfg:
@@ -29,6 +28,7 @@ class ScenarioManager:
         """
         self.env_cfg = env_cfg
         self._rng = np.random.default_rng()
+        self._scenario_name = str(env_cfg.get("name", "blockage")).lower()
         robot_cfg = env_cfg.get("robot", {}) if isinstance(env_cfg, dict) else {}
         if robot_radius_m is not None:
             self._robot_radius_m = float(robot_radius_m)
@@ -70,18 +70,42 @@ class ScenarioManager:
             num_pallets_max=nmax,
         )
 
-    def sample(self) -> Tuple:
-        """Sample a scenario according to current phase.
+    def sample(self) -> tuple[np.ndarray, np.ndarray, tuple[float, float, float], tuple[float, float], dict[str, Any]]:
+        """Sample a scenario.
 
-        Currently supports only blockage.
-        Returns: (grid, waypoints, start_pose, goal_xy, info)
+        Returns:
+            Occupancy grid, waypoints, start pose, goal xy, metadata dict.
         """
-        cfg = self._build_blockage_cfg()
+        if self._scenario_name == "blockage":
+            cfg = self._build_blockage_cfg()
+            generator = create_blockage_scenario
+        elif self._scenario_name == "t_junction":
+            from .scenarios_tjunction import TJunctionConfig, create_tjunction
+
+            map_cfg = self.env_cfg["map"]
+            size_x = float(map_cfg["size_m"][0])
+            size_y = float(map_cfg["size_m"][1])
+            corridor_raw = map_cfg["corridor_width_m"]
+            corridor_w = float(corridor_raw[0] if isinstance(corridor_raw, (list, tuple)) else corridor_raw)
+            goal_margin = float(map_cfg["goal_margin_x_m"])
+            cfg = TJunctionConfig(
+                map_width_m=size_x,
+                map_height_m=size_y,
+                corridor_w_m=corridor_w,
+                wall_th_m=float(map_cfg["wall_thickness_m"]),
+                resolution_m=float(map_cfg["resolution_m"]),
+                waypoint_step_m=float(map_cfg["waypoint_step_m"]),
+                start_x_m=float(map_cfg["start_x_m"]),
+                goal_x_m=size_x - goal_margin,
+            )
+            generator = create_tjunction
+        else:
+            raise NotImplementedError(f"Unknown scenario '{self._scenario_name}'")
 
         # Try to generate a feasible scenario with retries
         max_retries = 5
         for attempt in range(max_retries):
-            grid, waypoints, start_pose, goal_xy, info = create_blockage_scenario(cfg, self._rng)
+            grid, waypoints, start_pose, goal_xy, info = generator(cfg, self._rng)
 
             # Check path feasibility
             if self._is_path_feasible(grid, start_pose, goal_xy, cfg.resolution_m):
@@ -93,8 +117,8 @@ class ScenarioManager:
         # If all retries failed, return the last attempt (fallback)
         return grid, waypoints, start_pose, goal_xy, info
 
-    def _is_path_feasible(self, grid: np.ndarray, start_pose: Tuple[float, float, float],
-                         goal_xy: Tuple[float, float], resolution: float) -> bool:
+    def _is_path_feasible(self, grid: np.ndarray, start_pose: tuple[float, float, float],
+                          goal_xy: tuple[float, float], resolution: float) -> bool:
         """Path feasibility check using BFS with robot radius inflation.
 
         Args:

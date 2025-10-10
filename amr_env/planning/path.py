@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import atan2
-from typing import Tuple
 
 import numpy as np
 
@@ -22,7 +21,7 @@ def _polyline_arclength(pts: np.ndarray) -> np.ndarray:
     return s
 
 
-def _project_to_polyline(pts: np.ndarray, p: np.ndarray) -> Tuple[float, np.ndarray, int, float]:
+def _project_to_polyline(pts: np.ndarray, p: np.ndarray) -> tuple[float, np.ndarray, int, float]:
     """Project point p onto polyline pts.
 
     Returns (s_proj, proj_point, seg_idx, t) where s_proj is arclength position,
@@ -70,7 +69,7 @@ def _point_at_arclength(pts: np.ndarray, s: np.ndarray, s_target: float) -> np.n
 
 
 def compute_path_context(
-    pose: Tuple[float, float, float], waypoints: np.ndarray, preview_ds: Tuple[float, float, float]
+    pose: tuple[float, float, float], waypoints: np.ndarray, preview_ds: tuple[float, float, float]
 ) -> PathContext:
     """Compute lateral/heading errors and 3 preview points in robot frame."""
     x, y, th = pose
@@ -106,10 +105,10 @@ def compute_path_context(
 
 
 def closest_and_lookahead(
-    pose: Tuple[float, float, float],
+    pose: tuple[float, float, float],
     waypoints: np.ndarray,
     lookahead_m: float,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Return closest projection and lookahead waypoint along a polyline."""
 
     x, y, _ = pose

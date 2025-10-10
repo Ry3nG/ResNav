@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import Any
 
 from amr_env.utils import (
     detect_run_root,
@@ -26,14 +26,14 @@ from amr_env.utils import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def find_group_options(group: str) -> List[str]:
+def find_group_options(group: str) -> list[str]:
     d = REPO_ROOT / "configs" / group
     if not d.exists() or not d.is_dir():
         return []
     return [p.stem for p in sorted(d.glob("*.yaml"))]
 
 
-def prompt_choice(title: str, options: List[str], default_idx: int = 0) -> str:
+def prompt_choice(title: str, options: list[str], default_idx: int = 0) -> str:
     if not options:
         return ""
     print(f"\n{title}")
@@ -54,7 +54,9 @@ def prompt_choice(title: str, options: List[str], default_idx: int = 0) -> str:
 def prompt_text(title: str, default: str = "") -> str:
     ans = input(f"{title} (default '{default}'): ").strip()
     return ans if ans else default
-def load_config_groups(run_dir: str) -> Dict[str, str]:
+
+
+def load_config_groups(run_dir: str) -> dict[str, str]:
     """Parse config group overrides used for a run.
 
     Returns an empty dict if no overrides are present or format is unexpected.
@@ -62,7 +64,7 @@ def load_config_groups(run_dir: str) -> Dict[str, str]:
     return read_run_overrides(run_dir)
 
 
-def load_run_config(run_dir: str) -> Dict[str, Any]:
+def load_run_config(run_dir: str) -> dict[str, Any]:
     """Load resolved config for a run.
 
     Prefers `resolved.yaml` (if exported), otherwise falls back to Hydra config.
@@ -113,7 +115,7 @@ def display_model_config(model_path: str) -> None:
     print()  # Blank line for readability
 
 
-def build_train_command() -> Tuple[str, str]:
+def build_train_command() -> tuple[str, str]:
     # Config group selections
     env = prompt_choice("Environment", find_group_options("env"), 0)
     robot = prompt_choice("Robot", find_group_options("robot"), 0)
@@ -144,7 +146,7 @@ def build_train_command() -> Tuple[str, str]:
     return ("train", cmd)
 
 
-def build_render_command() -> Tuple[str, str]:
+def build_render_command() -> tuple[str, str]:
     print("\nExamples:")
     print("  runs/20250910_104559/best/")
     print("  runs/20250910_104559/final/")

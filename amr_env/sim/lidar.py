@@ -10,7 +10,7 @@ Design decisions:
 from __future__ import annotations
 
 from math import cos, sin, pi, inf
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 
@@ -61,7 +61,7 @@ class GridLidar:
     def sense(
         self,
         grid: np.ndarray,
-        pose: Tuple[float, float, float],
+        pose: tuple[float, float, float],
         noise: bool | None = None,
     ) -> np.ndarray:
         """Cast beams and return distances in meters.

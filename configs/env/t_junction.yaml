@@ -1,42 +1,27 @@
-# Phase I: Temporary partial blockage only; no dynamic movers.
-name: blockage
+name: t_junction
 map:
   size_m: [20.0, 20.0]
   resolution_m: 0.05
-  corridor_width_m: [3.0, 5.0]
+  corridor_width_m: [3.0, 3.0]
   wall_thickness_m: 0.3
-  pallet_width_m: 1.2
-  pallet_length_m: 1
   start_x_m: 1.0
   goal_margin_x_m: 1.0
   waypoint_step_m: 0.3
-  min_passage_m: 0.7  # typically robot_diameter(0.5) + 0.2 margin
-  min_pallet_x_offset_m: 1.0
-  num_pallets_min: 3
-  num_pallets_max: 5
-
+  min_passage_m: 0.7
+  num_pallets_min: 0
+  num_pallets_max: 0
 wrappers:
   frame_stack:
     enabled: true
     keys: [lidar]
     k: 4
     flatten: true
-
 lidar:
   beams: 24
   fov_deg: 240
   max_range_m: 4.0
   noise_std_m: 0.03
   noise_enable: true
-
-dynamic_movers:
-  enabled: false
-  count: 0
-
-global_path:
-  planner: astar
-  replanning: false
-
 viz:
   show_inflated: false
   show_lidar: true

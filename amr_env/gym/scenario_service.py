@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -16,9 +16,9 @@ class ScenarioSample:
     grid_raw: np.ndarray
     grid_inflated: np.ndarray
     waypoints: np.ndarray
-    start_pose: Tuple[float, float, float]
-    goal_xy: Tuple[float, float]
-    info: Dict[str, Any]
+    start_pose: tuple[float, float, float]
+    goal_xy: tuple[float, float]
+    info: dict[str, Any]
     edt: np.ndarray | None
     edt_ms: float
 
@@ -28,7 +28,7 @@ class ScenarioService:
 
     def __init__(
         self,
-        env_cfg: Dict[str, Any],
+        env_cfg: dict[str, Any],
         robot_radius_m: float,
         resolution_m: float,
     ) -> None:
@@ -57,7 +57,7 @@ class ScenarioService:
             edt_ms=edt_ms,
         )
 
-    def _compute_edt(self, grid_inflated: np.ndarray) -> Tuple[np.ndarray | None, float]:
+    def _compute_edt(self, grid_inflated: np.ndarray) -> tuple[np.ndarray | None, float]:
         from amr_env.sim.edt import compute_edt_meters
 
         free_mask = (~grid_inflated).astype(np.uint8)

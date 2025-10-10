@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import os
@@ -125,7 +125,7 @@ def main():
     parser.add_argument("--env_cfg", type=str, default="configs/env/blockage.yaml")
     parser.add_argument("--robot_cfg", type=str, default="configs/robot/default.yaml")
     parser.add_argument("--reward_cfg", type=str, default="configs/reward/default.yaml")
-    parser.add_argument("--run_cfg", type=str, default="configs/run/default.yaml")
+    parser.add_argument("--run_cfg", type=str, default="")
     parser.add_argument("--vecnorm", type=str, default="")
     parser.add_argument("--deterministic", action="store_true")
 
@@ -136,34 +136,47 @@ def main():
         model_zip, vecnorm_pkl, run_dir = resolve_model_and_vecnorm(args.model)
         # Load run config if available
         cfg = load_resolved_run_config(run_dir)
-        env_cfg: Dict[str, Any] = (
+        env_cfg: dict[str, Any] = (
             cfg["env"]
             if isinstance(cfg, dict) and "env" in cfg
             else load_config_dict(args.env_cfg)
         )
-        robot_cfg: Dict[str, Any] = (
+        robot_cfg: dict[str, Any] = (
             cfg["robot"]
             if isinstance(cfg, dict) and "robot" in cfg
             else load_config_dict(args.robot_cfg)
         )
-        reward_cfg: Dict[str, Any] = (
+        reward_cfg: dict[str, Any] = (
             cfg["reward"]
             if isinstance(cfg, dict) and "reward" in cfg
             else load_config_dict(args.reward_cfg)
         )
-        run_cfg: Dict[str, Any] = (
-            cfg["run"]
-            if isinstance(cfg, dict) and "run" in cfg
-            else load_config_dict(args.run_cfg)
-        )
+        run_cfg: dict[str, Any]
+        if isinstance(cfg, dict) and "run" in cfg:
+            run_cfg = cfg["run"]
+        elif args.run_cfg:
+            run_cfg = load_config_dict(args.run_cfg)
+        else:
+            try:
+                base_cfg = load_config_dict("configs/config.yaml")
+                run_cfg = base_cfg.get("run", {"dt": 0.1, "max_steps": 600})
+            except Exception:
+                run_cfg = {"dt": 0.1, "max_steps": 600}
         # Prepare resolved paths for later loading
         args.model = model_zip
         auto_vecnorm = vecnorm_pkl or ""
     else:
-        env_cfg = load_config_dict(args.env_cfg)
-        robot_cfg = load_config_dict(args.robot_cfg)
-        reward_cfg = load_config_dict(args.reward_cfg)
-        run_cfg = load_config_dict(args.run_cfg)
+        env_cfg: dict[str, Any] = load_config_dict(args.env_cfg)
+        robot_cfg: dict[str, Any] = load_config_dict(args.robot_cfg)
+        reward_cfg: dict[str, Any] = load_config_dict(args.reward_cfg)
+        if args.run_cfg:
+            run_cfg = load_config_dict(args.run_cfg)
+        else:
+            try:
+                base_cfg = load_config_dict("configs/config.yaml")
+                run_cfg = base_cfg.get("run", {"dt": 0.1, "max_steps": 600})
+            except Exception:
+                run_cfg = {"dt": 0.1, "max_steps": 600}
         auto_vecnorm = ""
 
     # Build env factory so we can wrap with VecNormalize when needed

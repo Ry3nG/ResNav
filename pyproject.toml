@@ -1,19 +1,14 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "me5418-amr-env"
+name = "amr-nav"
 version = "0.1.0"
-description = "AMR Env: lightweight 2D sim, Gym envs, and tools"
-authors = [{ name = "ME5418 Team" }]
+description = "AMR residual navigation for ME5418"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
 [tool.setuptools.packages.find]
-include = [
-  "amr_env*",
-  "training*",
-  "eval*"
-]
+include = ["amr_env*", "training*", "tools*"]

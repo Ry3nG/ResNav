@@ -10,7 +10,7 @@ Action: residual Δu added to Pure Pursuit u_track, clipped to robot limits.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import numpy as np
 import gymnasium as gym
@@ -30,10 +30,10 @@ class ResidualNavEnv(gym.Env):
 
     def __init__(
         self,
-        env_cfg: Dict[str, Any],
-        robot_cfg: Dict[str, Any],
-        reward_cfg: Dict[str, Any],
-        run_cfg: Dict[str, Any],
+        env_cfg: dict[str, Any],
+        robot_cfg: dict[str, Any],
+        reward_cfg: dict[str, Any],
+        run_cfg: dict[str, Any],
     ):
         super().__init__()
         self.env_cfg = env_cfg
@@ -120,15 +120,15 @@ class ResidualNavEnv(gym.Env):
         self._prev_u = (0.0, 0.0)
         self._steps = 0
         self._max_steps = int(run_cfg["max_steps"])
-        self._last_reward_terms: Dict[str, Any] = {}
-        self._last_obs: Dict[str, np.ndarray] = {}
+        self._last_reward_terms: dict[str, Any] = {}
+        self._last_obs: dict[str, np.ndarray] = {}
 
     def seed(self, seed: int | None = None):
         if seed is not None:
             self._scenario_service.set_seed(seed)
             self.lidar.set_seed(seed)
 
-    def reset(self, *, seed: int | None = None, options: Dict[str, Any] | None = None):
+    def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
         super().reset(seed=seed)
         if seed is not None:
             self.seed(seed)
@@ -249,7 +249,7 @@ class ResidualNavEnv(gym.Env):
         reward = float(reward_result.total)
 
         obs = obs_data.obs
-        info: Dict[str, Any] = {}
+        info: dict[str, Any] = {}
         if terminated or truncated:
             info["is_success"] = bool(terminated and goal_dist < 0.5)
             if breakdown:
@@ -260,7 +260,7 @@ class ResidualNavEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     # Debug/visualization helper to avoid poking private fields externally
-    def get_render_payload(self) -> Dict[str, Any]:
+    def get_render_payload(self) -> dict[str, Any]:
         pose = self._model.as_pose()
         scenario = self._scenario
         payload = {
@@ -282,7 +282,7 @@ class ResidualNavEnv(gym.Env):
         }
         return payload
 
-    def _get_obs(self) -> Dict[str, np.ndarray]:
+    def _get_obs(self) -> dict[str, np.ndarray]:
         return self._build_observation().obs
 
     def _is_collision(self) -> bool:

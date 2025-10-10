@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -18,7 +18,7 @@ from amr_env.reward import (
 @dataclass
 class RewardResult:
     total: float
-    breakdown: Dict[str, Any]
+    breakdown: dict[str, Any]
     terms: RewardTerms
 
 
@@ -27,8 +27,8 @@ class RewardManager:
 
     def __init__(
         self,
-        robot_cfg: Dict[str, Any],
-        reward_cfg: Dict[str, Any],
+        robot_cfg: dict[str, Any],
+        reward_cfg: dict[str, Any],
         dt: float,
     ) -> None:
         self._robot_cfg = robot_cfg
@@ -36,7 +36,7 @@ class RewardManager:
         self._dt = float(dt)
         self._prev_goal_dist: float | None = None
         self._prev_true_ranges: np.ndarray | None = None
-        self._last_breakdown: Dict[str, Any] = {}
+        self._last_breakdown: dict[str, Any] = {}
 
     def reset(self) -> None:
         self._prev_goal_dist = None
@@ -44,15 +44,15 @@ class RewardManager:
         self._last_breakdown = {}
 
     @property
-    def last_breakdown(self) -> Dict[str, Any]:
+    def last_breakdown(self) -> dict[str, Any]:
         return self._last_breakdown
 
     def compute(
         self,
-        pose: Tuple[float, float, float],
+        pose: tuple[float, float, float],
         waypoints: np.ndarray,
-        last_u: Tuple[float, float],
-        prev_u: Tuple[float, float],
+        last_u: tuple[float, float],
+        prev_u: tuple[float, float],
         terminated: bool,
         truncated: bool,
         path_context: Any | None,
@@ -109,6 +109,6 @@ class RewardManager:
         self._last_breakdown = breakdown
         return RewardResult(total=total, breakdown=breakdown, terms=terms)
 
-    def update_last_breakdown(self, breakdown: Dict[str, Any]) -> None:
+    def update_last_breakdown(self, breakdown: dict[str, Any]) -> None:
         """Allow callers to override the cached breakdown (e.g., to append metrics)."""
         self._last_breakdown = breakdown

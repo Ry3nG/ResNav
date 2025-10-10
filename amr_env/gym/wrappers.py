@@ -7,7 +7,7 @@ across the last K timesteps with flattened output.
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
 from gymnasium import spaces
@@ -35,7 +35,7 @@ class LidarFrameStackVec(VecEnvWrapper):
         assert isinstance(lidar_space, spaces.Box) and len(lidar_space.shape) == 1, "Lidar space must be 1D Box"
 
         # Build new observation space
-        new_spaces: Dict[str, spaces.Space] = {}
+        new_spaces: dict[str, spaces.Space] = {}
         for kname, space in self.observation_space.spaces.items():
             if kname == "lidar":
                 low = np.repeat(space.low, self.k)
@@ -46,11 +46,11 @@ class LidarFrameStackVec(VecEnvWrapper):
         self.observation_space = spaces.Dict(new_spaces)
 
         # Frame buffers per env for lidar
-        self._lidar_buffers: List[Deque[np.ndarray]] = [
+        self._lidar_buffers: list[deque[np.ndarray]] = [
             deque(maxlen=self.k) for _ in range(self.num_envs)
         ]
 
-    def reset(self, **kwargs) -> Dict[str, np.ndarray]:
+    def reset(self, **kwargs) -> dict[str, np.ndarray]:
         out = self.venv.reset(**kwargs)
         if isinstance(out, tuple) and len(out) == 2:
             obs, _info = out
@@ -67,7 +67,7 @@ class LidarFrameStackVec(VecEnvWrapper):
         
         return self._stack_obs(obs)
 
-    def step_wait(self) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray, List[Dict]]:
+    def step_wait(self) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, list[dict[str, Any]]]:
         obs, rewards, dones, infos = self.venv.step_wait()
         assert isinstance(obs, dict)
         
@@ -91,15 +91,15 @@ class LidarFrameStackVec(VecEnvWrapper):
                 if "terminal_observation" in infos[e]:
                     term = infos[e]["terminal_observation"]
                     if isinstance(term, dict):
-                        new_term: Dict[str, np.ndarray] = {}
+                        new_term: dict[str, np.ndarray] = {}
                         for key in stacked_obs:
                             new_term[key] = stacked_obs[key][e]
                         infos[e]["terminal_observation"] = new_term
         
         return stacked_obs, rewards, dones, infos
 
-    def _stack_obs(self, obs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        out: Dict[str, np.ndarray] = {}
+    def _stack_obs(self, obs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        out: dict[str, np.ndarray] = {}
         for kname, arr in obs.items():
             if kname == "lidar":
                 stacked = []

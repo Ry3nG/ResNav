@@ -7,7 +7,6 @@ Pose is (x, y, theta). Waypoints is (N, 2) polyline in world frame.
 from __future__ import annotations
 
 from math import cos, sin
-from typing import Tuple
 
 import numpy as np
 
@@ -15,8 +14,8 @@ from amr_env.planning.path import closest_and_lookahead
 
 
 def compute_u_track(
-    pose: Tuple[float, float, float], waypoints: np.ndarray, lookahead_m: float, v_nominal: float
-) -> Tuple[float, float]:
+    pose: tuple[float, float, float], waypoints: np.ndarray, lookahead_m: float, v_nominal: float
+) -> tuple[float, float]:
     """Compute tracker command (v, w) using Pure Pursuit geometry."""
     x, y, th = pose
     _, target = closest_and_lookahead(pose, waypoints, lookahead_m)

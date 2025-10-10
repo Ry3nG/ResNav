@@ -53,6 +53,10 @@ configs/                 # Hydra config groups
 | Network | `configs/network/default.yaml` | MLP sizes, activations |
 | WandB | `configs/wandb/default.yaml` | Project, mode, tags |
 
+### Adding New Maps Quickly
+- `ScenarioManager` now switches on `env.name`; `name: t_junction` is provided in `configs/env/t_junction.yaml`.
+- For a step-by-step recipe (scenario generator + config glue), read `docs/ARCHITECTURE.md#adding-a-new-map`.
+
 ## Design Overview
 
 ### Observation (Dict)
@@ -80,3 +84,12 @@ Reward schema exposed per step (for HUD/logging):
 - When rendering, the loader prefers `vecnorm_best.pkl` or `vecnorm_final.pkl`; otherwise falls back to `vecnorm.pkl` in checkpoints.
 - Renderer shows geometry overlays in physical units (meters/radians). Module path: `amr_env.viz.pygame_renderer.Renderer`.
 - Reward logs stream to TensorBoard by default and mirror to W&B when enabled.
+
+## Testing
+- Lightweight regression tests live under `tests/` and exercise pure pursuit, path projection, LiDAR, inflation, and EDT helpers.
+- Run `pytest` (after `pip install -e .`) to ensure math kernels stay stable across refactors.
+
+## Development Notes
+- **Python 3.10+ required**: The codebase uses modern type hints (`tuple[...]`, `dict[...]`, `list[...]`) via `from __future__ import annotations`.
+- **Pre-commit hooks**: Run `pre-commit install` to enable automatic linting (ruff, black, mypy) on commit.
+- **Package structure**: Installable via `pip install -e .` for clean imports in Hydra subprocess workers.

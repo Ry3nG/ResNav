@@ -14,7 +14,8 @@ Supports windowed (interactive) and headless modes. Returns frames for recording
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Optional
+import os
 
 import numpy as np
 import pygame
@@ -22,25 +23,25 @@ import pygame
 
 @dataclass
 class Colors:
-    background: Tuple[int, int, int] = (20, 20, 20)
-    raw_grid: Tuple[int, int, int] = (60, 60, 60)
-    inflated_grid: Tuple[int, int, int] = (80, 20, 20)
-    robot: Tuple[int, int, int] = (50, 180, 255)
-    robot_heading: Tuple[int, int, int] = (0, 255, 0)
-    lidar_ray: Tuple[int, int, int] = (255, 255, 0)
-    lidar_hit: Tuple[int, int, int] = (255, 0, 0)
-    path: Tuple[int, int, int] = (0, 200, 200)
-    projection: Tuple[int, int, int] = (200, 100, 255)
-    lookahead: Tuple[int, int, int] = (100, 255, 100)
-    action_track: Tuple[int, int, int] = (0, 120, 255)
-    action_delta: Tuple[int, int, int] = (255, 120, 0)
-    action_final: Tuple[int, int, int] = (255, 0, 255)
-    text: Tuple[int, int, int] = (255, 255, 255)
+    background: tuple[int, int, int] = (20, 20, 20)
+    raw_grid: tuple[int, int, int] = (60, 60, 60)
+    inflated_grid: tuple[int, int, int] = (80, 20, 20)
+    robot: tuple[int, int, int] = (50, 180, 255)
+    robot_heading: tuple[int, int, int] = (0, 255, 0)
+    lidar_ray: tuple[int, int, int] = (255, 255, 0)
+    lidar_hit: tuple[int, int, int] = (255, 0, 0)
+    path: tuple[int, int, int] = (0, 200, 200)
+    projection: tuple[int, int, int] = (200, 100, 255)
+    lookahead: tuple[int, int, int] = (100, 255, 100)
+    action_track: tuple[int, int, int] = (0, 120, 255)
+    action_delta: tuple[int, int, int] = (255, 120, 0)
+    action_final: tuple[int, int, int] = (255, 0, 255)
+    text: tuple[int, int, int] = (255, 255, 255)
 
 
 @dataclass
 class VizConfig:
-    size_px: Tuple[int, int] = (800, 800)
+    size_px: tuple[int, int] = (800, 800)
     show_inflated: bool = True
     show_lidar: bool = True
     show_actions: bool = True
@@ -51,7 +52,7 @@ class VizConfig:
 class Renderer:
     def __init__(
         self,
-        map_size_m: Tuple[float, float],
+        map_size_m: tuple[float, float],
         resolution_m: float,
         viz_cfg: Optional[VizConfig] = None,
         display: bool = True,
@@ -64,6 +65,9 @@ class Renderer:
         self.scale = min(self.width / self.map_w, self.height / self.map_h)
         self.display = bool(display)
 
+        if not self.display:
+            os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
         pygame.init()
         if self.display:
             self.screen = pygame.display.set_mode((self.width, self.height))
@@ -74,7 +78,7 @@ class Renderer:
         pygame.font.init()
         self.font = pygame.font.SysFont("Arial", 14)
 
-    def world_to_screen(self, x: float, y: float) -> Tuple[int, int]:
+    def world_to_screen(self, x: float, y: float) -> tuple[int, int]:
         # Flip Y for screen coords (origin top-left)
         sx = int(x * self.scale)
         sy = int(self.height - y * self.scale)
@@ -83,7 +87,7 @@ class Renderer:
         sy = max(0, min(self.height - 1, sy))
         return sx, sy
 
-    def draw_grid(self, grid: np.ndarray, color: Tuple[int, int, int]) -> None:
+    def draw_grid(self, grid: np.ndarray, color: tuple[int, int, int]) -> None:
         H, W = grid.shape
         cell_size = self.res * self.scale
         occupied = np.where(grid)
@@ -93,7 +97,7 @@ class Renderer:
             rect = pygame.Rect(int(x0), int(y0), int(cell_size + 1), int(cell_size + 1))
             pygame.draw.rect(self.screen, color, rect)
 
-    def draw_robot(self, pose: Tuple[float, float, float], radius_m: float) -> None:
+    def draw_robot(self, pose: tuple[float, float, float], radius_m: float) -> None:
         x, y, th = pose
         sx, sy = self.world_to_screen(x, y)
         r_px = int(radius_m * self.scale)
@@ -108,8 +112,8 @@ class Renderer:
 
     def draw_lidar(
         self,
-        pose: Tuple[float, float, float],
-        lidar_data: Tuple[np.ndarray, int, float, float],
+        pose: tuple[float, float, float],
+        lidar_data: tuple[np.ndarray, int, float, float],
     ) -> None:
         if not self.viz.show_lidar:
             return
@@ -133,8 +137,8 @@ class Renderer:
     def draw_path(
         self,
         waypoints: np.ndarray,
-        proj: Optional[Tuple[float, float]] = None,
-        lookahead: Optional[Tuple[float, float]] = None,
+        proj: Optional[tuple[float, float]] = None,
+        lookahead: Optional[tuple[float, float]] = None,
     ) -> None:
         if len(waypoints) >= 2:
             pts = [self.world_to_screen(float(x), float(y)) for x, y in waypoints]
@@ -148,9 +152,9 @@ class Renderer:
 
     def draw_actions(
         self,
-        pose: Tuple[float, float, float],
-        actions_data: Tuple[
-            Tuple[float, float], Tuple[float, float], Tuple[float, float]
+        pose: tuple[float, float, float],
+        actions_data: tuple[
+            tuple[float, float], tuple[float, float], tuple[float, float]
         ],
         scale: float = 0.5,
     ) -> None:
@@ -173,7 +177,7 @@ class Renderer:
             ex_px, ey_px = self.world_to_screen(ex, ey)
             pygame.draw.line(self.screen, color, (sx, sy), (ex_px, ey_px), width=3)
 
-    def draw_hud(self, text_lines: Dict[str, float], y0: int = 10) -> None:
+    def draw_hud(self, text_lines: dict[str, float], y0: int = 10) -> None:
         x, y = 10, y0
         for k, v in text_lines.items():
             surf = self.font.render(f"{k}: {v:.3f}", True, self.colors.text)
@@ -184,16 +188,16 @@ class Renderer:
         self,
         raw_grid: np.ndarray,
         inflated_grid: Optional[np.ndarray],
-        pose: Tuple[float, float, float],
+        pose: tuple[float, float, float],
         radius_m: float,
-        lidar: Optional[Tuple[np.ndarray, int, float, float]] = None,
+        lidar: Optional[tuple[np.ndarray, int, float, float]] = None,
         path: Optional[np.ndarray] = None,
-        proj: Optional[Tuple[float, float]] = None,
-        lookahead: Optional[Tuple[float, float]] = None,
+        proj: Optional[tuple[float, float]] = None,
+        lookahead: Optional[tuple[float, float]] = None,
         actions: Optional[
-            Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]]
+            tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
         ] = None,
-        hud: Optional[Dict[str, float]] = None,
+        hud: Optional[dict[str, float]] = None,
     ) -> "pygame.Surface":
         self.screen.fill(self.colors.background)
 

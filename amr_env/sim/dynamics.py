@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import cos, sin, pi
-from typing import Tuple
 
 
 @dataclass
@@ -59,7 +58,7 @@ class UnicycleModel:
             wrapped -= 2.0 * pi
         return wrapped
 
-    def clip_action(self, u: Tuple[float, float]) -> Tuple[float, float]:
+    def clip_action(self, u: tuple[float, float]) -> tuple[float, float]:
         v_cmd, w_cmd = u
         v_applied = min(max(v_cmd, self.v_min), self.v_max)
         w_applied = min(max(w_cmd, self.w_min), self.w_max)
@@ -73,7 +72,7 @@ class UnicycleModel:
         self._last_state = UnicycleState(s.x, s.y, theta, v_applied, w_applied)
         return self._last_state
 
-    def step(self, action: Tuple[float, float], dt: float) -> UnicycleState:
+    def step(self, action: tuple[float, float], dt: float) -> UnicycleState:
         """Apply clipped (v, w) for duration dt using Euler integration."""
         v, w = self.clip_action(action)
         x0, y0, th0 = self._last_state.x, self._last_state.y, self._last_state.theta

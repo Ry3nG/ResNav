@@ -7,7 +7,7 @@ schema to expose breakdowns for logging and visualization.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from typing import Dict, Tuple, Any
+from typing import Any
 
 import numpy as np
 
@@ -24,16 +24,16 @@ class RewardTerms:
 
 
 def compute_terms(
-    pose: Tuple[float, float, float],
+    pose: tuple[float, float, float],
     waypoints: np.ndarray,
     prev_goal_dist: float | None,
-    last_u: Tuple[float, float],
-    prev_u: Tuple[float, float],
-    robot_cfg: Dict,
-    reward_cfg: Dict,
+    last_u: tuple[float, float],
+    prev_u: tuple[float, float],
+    robot_cfg: dict,
+    reward_cfg: dict,
     terminated: bool,
     truncated: bool = False,
-) -> Tuple[RewardTerms, float]:
+) -> tuple[RewardTerms, float]:
     """Compute raw reward terms and updated prev_goal_dist.
 
     Returns (terms, new_prev_goal_dist).
@@ -134,15 +134,15 @@ def compute_terms(
 
 
 def apply_weights(
-    terms: RewardTerms, weights: Dict[str, float]
-) -> Tuple[float, Dict[str, float]]:
+    terms: RewardTerms, weights: dict[str, float]
+) -> tuple[float, dict[str, float]]:
     """Apply weights to raw terms to produce total and contributions.
 
     Returns (total, contrib_dict)
     """
     # Build contributions generically from provided weights and available raw terms
     raw = asdict(terms)
-    contrib: Dict[str, float] = {}
+    contrib: dict[str, float] = {}
     for k, w in weights.items():
         try:
             contrib[k] = float(w) * float(raw.get(k, 0.0))
@@ -157,10 +157,10 @@ def apply_weights(
 
 def to_breakdown_dict(
     terms: RewardTerms,
-    weights: Dict[str, float],
+    weights: dict[str, float],
     total: float,
-    contrib: Dict[str, float],
-) -> Dict[str, object]:
+    contrib: dict[str, float],
+) -> dict[str, object]:
     """Pack a standardized reward_terms dict for logging/visualization."""
     return {
         "version": "1.0",

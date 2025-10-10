@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
@@ -19,7 +19,7 @@ from training.env_factory import make_vec_envs
 from training.feature_extractors import LiDAR1DConvExtractor
 
 
-def _to_dict(cfg_section: Any) -> Dict[str, Any]:
+def _to_dict(cfg_section: Any) -> dict[str, Any]:
     if isinstance(cfg_section, DictConfig):
         data = OmegaConf.to_container(cfg_section, resolve=True)
     else:
@@ -33,14 +33,14 @@ def _to_dict(cfg_section: Any) -> Dict[str, Any]:
 
 def resolve_cfg(
     cfg: DictConfig,
-) -> Tuple[
-    Dict[str, Any],
-    Dict[str, Any],
-    Dict[str, Any],
-    Dict[str, Any],
-    Dict[str, Any],
-    Dict[str, Any],
-    Dict[str, Any],
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
 ]:
     env_cfg = _to_dict(cfg.env)
     robot_cfg = _to_dict(cfg.robot)
@@ -52,7 +52,7 @@ def resolve_cfg(
     return env_cfg, robot_cfg, reward_cfg, algo_cfg, network_cfg, wandb_cfg, run_cfg
 
 
-def maybe_init_wandb(wandb_cfg: Dict[str, Any], extra_config: Dict[str, Any]):
+def maybe_init_wandb(wandb_cfg: dict[str, Any], extra_config: dict[str, Any]):
     mode = str(wandb_cfg.get("mode", "disabled"))
     if mode == "disabled":
         return None
@@ -72,7 +72,7 @@ def maybe_init_wandb(wandb_cfg: Dict[str, Any], extra_config: Dict[str, Any]):
     return run
 
 
-def build_policy_kwargs(network_cfg: Dict[str, Any], env_cfg: Dict[str, Any], algo_name: str) -> Dict[str, Any]:
+def build_policy_kwargs(network_cfg: dict[str, Any], env_cfg: dict[str, Any], algo_name: str) -> dict[str, Any]:
     actor_cfg = network_cfg.get("actor", {})
     critic_cfg = network_cfg.get("critic", {})
     activation = str(actor_cfg.get("activation", "relu")).lower()
@@ -82,7 +82,7 @@ def build_policy_kwargs(network_cfg: Dict[str, Any], env_cfg: Dict[str, Any], al
         "elu": nn.ELU,
         "leaky_relu": nn.LeakyReLU,
     }
-    net_arch: Dict[str, Any]
+    net_arch: dict[str, Any]
     if algo_name == "ppo":
         net_arch = {
             "pi": actor_cfg.get("hidden_sizes", []),
@@ -94,7 +94,7 @@ def build_policy_kwargs(network_cfg: Dict[str, Any], env_cfg: Dict[str, Any], al
             "qf": critic_cfg.get("hidden_sizes", []),
         }
 
-    policy_kwargs: Dict[str, Any] = {
+    policy_kwargs: dict[str, Any] = {
         "net_arch": net_arch,
         "activation_fn": act_map.get(activation, nn.ReLU),
     }
@@ -120,11 +120,11 @@ def build_policy_kwargs(network_cfg: Dict[str, Any], env_cfg: Dict[str, Any], al
 
 
 def make_train_and_eval_envs(
-    env_cfg: Dict[str, Any],
-    robot_cfg: Dict[str, Any],
-    reward_cfg: Dict[str, Any],
-    run_cfg: Dict[str, Any],
-    algo_cfg: Dict[str, Any],
+    env_cfg: dict[str, Any],
+    robot_cfg: dict[str, Any],
+    reward_cfg: dict[str, Any],
+    run_cfg: dict[str, Any],
+    algo_cfg: dict[str, Any],
 ):
     frame_stack = int(env_cfg["wrappers"]["frame_stack"]["k"])
     n_envs = int(run_cfg.get("vec_envs", 1))
@@ -171,7 +171,7 @@ def configure_logger(model) -> None:
     model.set_logger(logger)
 
 
-def _init_model(algo_name: str, algo_cfg: Dict[str, Any], policy_kwargs: Dict[str, Any], train_env, seed: int):
+def _init_model(algo_name: str, algo_cfg: dict[str, Any], policy_kwargs: dict[str, Any], train_env, seed: int):
     if algo_name == "ppo":
         return PPO(
             policy="MultiInputPolicy",

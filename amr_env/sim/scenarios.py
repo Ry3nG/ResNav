@@ -7,7 +7,7 @@ Outputs an occupancy grid, straight global path waypoints, start/goal, and info.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Optional
 import math
 import numpy as np
 
@@ -36,12 +36,12 @@ class BlockageScenarioConfig:
 def create_blockage_scenario(
     cfg: Optional[BlockageScenarioConfig] = None,
     rng: Optional[np.random.Generator] = None,
-) -> Tuple[
+) -> tuple[
     np.ndarray,  # occupancy grid: True=occupied
     np.ndarray,  # waypoints: shape (N, 2)
-    Tuple[float, float, float],  # start pose (x, y, theta)
-    Tuple[float, float],  # goal xy
-    Dict[str, float],  # info dict with metadata
+    tuple[float, float, float],  # start pose (x, y, theta)
+    tuple[float, float],  # goal xy
+    dict[str, float],  # info dict with metadata
 ]:
     """Generate a blockage-only scenario with corridor and pallets.
 
