@@ -19,6 +19,7 @@ from gymnasium import spaces
 from amr_env.sim.dynamics import UnicycleModel, UnicycleState
 from amr_env.sim.lidar import GridLidar
 from amr_env.control.pure_pursuit import compute_u_track
+from amr_env.sim import movers
 
 from .observation_builder import ObservationBuilder, ObservationData
 from .reward_manager import RewardManager
@@ -122,6 +123,12 @@ class ResidualNavEnv(gym.Env):
         self._max_steps = int(run_cfg["max_steps"])
         self._last_reward_terms: dict[str, Any] = {}
         self._last_obs: dict[str, np.ndarray] = {}
+        self._grid_dyn_raw: np.ndarray | None = None
+        self._grid_dyn_infl: np.ndarray | None = None
+        self._grid_raw_curr: np.ndarray | None = None
+        self._grid_infl_curr: np.ndarray | None = None
+        self._movers: list[movers.DiscMover] = []
+        self._t = 0.0
 
     def seed(self, seed: int | None = None):
         if seed is not None:
@@ -148,10 +155,79 @@ class ResidualNavEnv(gym.Env):
         self._steps = 0
         self._last_reward_terms = {}
         self._last_obs = {}
+        self._t = 0.0
+
+        H, W = self._scenario.grid_raw.shape
+        self._grid_dyn_raw = np.zeros((H, W), dtype=bool)
+        self._grid_dyn_infl = np.zeros((H, W), dtype=bool)
+        self._spawn_movers()
+        if self.env_cfg.get("dynamic_movers", {}).get("enabled", False):
+            self._update_dynamic_grids(0.0)
+        self._compose_current_grids()
 
         obs = self._build_observation().obs
         # Do not set SB3's episode info; RecordEpisodeStatistics will populate it
         return obs, {}
+
+    def _spawn_movers(self) -> None:
+        self._movers = []
+        dyn_cfg = self.env_cfg.get("dynamic_movers", {})
+        if not dyn_cfg.get("enabled", False):
+            return
+        scenario_name = str(self.env_cfg.get("name", "blockage")).lower()
+        if scenario_name != "omcf":
+            return
+        rng = getattr(self, "np_random", None)
+        if rng is None:
+            rng = np.random.default_rng()
+        # Scenario info carries hole locations and corridor bounds.
+        self._movers = movers.sample_movers_for_omcf(
+            self.env_cfg,
+            self._scenario.info,
+            rng,
+        )
+
+    def _update_dynamic_grids(self, dt: float) -> None:
+        if self._grid_dyn_raw is None or self._grid_dyn_infl is None:
+            return
+        self._grid_dyn_raw.fill(False)
+        self._grid_dyn_infl.fill(False)
+        inflate_extra = self.radius_m
+        for mover in self._movers:
+            mover.step(dt, self._t)
+            movers.rasterize_disc(
+                self._grid_dyn_raw,
+                mover.x,
+                mover.y,
+                mover.radius_m,
+                self.resolution_m,
+            )
+            movers.rasterize_disc(
+                self._grid_dyn_infl,
+                mover.x,
+                mover.y,
+                mover.radius_m + inflate_extra,
+                self.resolution_m,
+            )
+
+    def _compose_current_grids(self) -> None:
+        scenario = self._scenario
+        if scenario is None:
+            self._grid_raw_curr = None
+            self._grid_infl_curr = None
+            return
+        if self._grid_dyn_raw is not None:
+            self._grid_raw_curr = np.logical_or(
+                scenario.grid_raw, self._grid_dyn_raw
+            )
+        else:
+            self._grid_raw_curr = scenario.grid_raw
+        if self._grid_dyn_infl is not None:
+            self._grid_infl_curr = np.logical_or(
+                scenario.grid_inflated, self._grid_dyn_infl
+            )
+        else:
+            self._grid_infl_curr = scenario.grid_inflated
 
     def _clearance_iso(self) -> float:
         """Deterministic clearance via bilinear sampling over the EDT grid."""
@@ -201,6 +277,17 @@ class ResidualNavEnv(gym.Env):
         self._prev_u = self._last_u
         self._last_u = (v_cmd, w_cmd)
         self._model.step((v_cmd, w_cmd), self.dt)
+        self._t += self.dt
+
+        dyn_cfg = self.env_cfg.get("dynamic_movers", {})
+        scenario_name = str(self.env_cfg.get("name", "blockage")).lower()
+        dyn_enabled = bool(dyn_cfg.get("enabled", False)) and scenario_name == "omcf"
+        if dyn_enabled:
+            self._update_dynamic_grids(self.dt)
+            self._compose_current_grids()
+        else:
+            self._grid_raw_curr = self._scenario.grid_raw
+            self._grid_infl_curr = self._scenario.grid_inflated
 
         terminated = False
         truncated = False
@@ -222,12 +309,16 @@ class ResidualNavEnv(gym.Env):
         if not isinstance(safety_cfg, dict):
             safety_cfg = {}
         use_map_barrier = str(safety_cfg.get("source", "")).lower() == "map"
-        clearance = self._clearance_iso() if use_map_barrier else None
+        clearance = None
         true_ranges = None
-        if use_map_barrier and bool(safety_cfg.get("ttc_enabled", False)):
+        if use_map_barrier:
             true_ranges = self.lidar.sense(
-                self._scenario.grid_raw, self._model.as_pose(), noise=False
+                self._grid_raw_curr, self._model.as_pose(), noise=False
             )
+            static_clear = self._clearance_iso()
+            clearance = min(static_clear, float(np.min(true_ranges)))
+            if not bool(safety_cfg.get("ttc_enabled", False)):
+                true_ranges = None
 
         reward_result = self._reward_manager.compute(
             self._model.as_pose(),
@@ -264,8 +355,8 @@ class ResidualNavEnv(gym.Env):
         pose = self._model.as_pose()
         scenario = self._scenario
         payload = {
-            "raw_grid": None if scenario is None else scenario.grid_raw,
-            "inflated_grid": None if scenario is None else scenario.grid_inflated,
+            "raw_grid": None if scenario is None else self._grid_raw_curr,
+            "inflated_grid": None if scenario is None else self._grid_infl_curr,
             "pose": pose,
             "radius_m": self.radius_m,
             "lidar": {
@@ -290,10 +381,9 @@ class ResidualNavEnv(gym.Env):
         return self._point_in_inflated(x, y)
 
     def _point_in_inflated(self, x: float, y: float) -> bool:
-        scenario = self._scenario
-        if scenario is None:
+        if self._grid_infl_curr is None:
             return False
-        grid = scenario.grid_inflated
+        grid = self._grid_infl_curr
         i = int(np.floor(y / self.resolution_m))
         j = int(np.floor(x / self.resolution_m))
         H, W = grid.shape
@@ -310,7 +400,7 @@ class ResidualNavEnv(gym.Env):
         if self._scenario is None:
             raise RuntimeError("Environment must be reset before building observations")
         data = self._obs_builder.build(
-            self._scenario.grid_raw,
+            self._grid_raw_curr,
             self._model.as_pose(),
             self._scenario.waypoints,
             self._last_u,

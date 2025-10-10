@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import argparse
 from typing import Any
+import warnings
 
 import numpy as np
 import os
 from pathlib import Path
+
+# Suppress pygame pkg_resources deprecation warning
+warnings.filterwarnings(
+    "ignore", message="pkg_resources is deprecated", category=UserWarning
+)
 
 from amr_env.utils import (
     detect_run_root,
