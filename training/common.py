@@ -5,7 +5,7 @@ from typing import Any
 
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
-from stable_baselines3 import PPO, SAC
+from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.vec_env import VecNormalize
@@ -72,7 +72,9 @@ def maybe_init_wandb(wandb_cfg: dict[str, Any], extra_config: dict[str, Any]):
     return run
 
 
-def build_policy_kwargs(network_cfg: dict[str, Any], env_cfg: dict[str, Any], algo_name: str) -> dict[str, Any]:
+def build_policy_kwargs(
+    network_cfg: dict[str, Any], env_cfg: dict[str, Any], algo_name: str
+) -> dict[str, Any]:
     actor_cfg = network_cfg.get("actor", {})
     critic_cfg = network_cfg.get("critic", {})
     activation = str(actor_cfg.get("activation", "relu")).lower()
@@ -82,17 +84,11 @@ def build_policy_kwargs(network_cfg: dict[str, Any], env_cfg: dict[str, Any], al
         "elu": nn.ELU,
         "leaky_relu": nn.LeakyReLU,
     }
-    net_arch: dict[str, Any]
-    if algo_name == "ppo":
-        net_arch = {
-            "pi": actor_cfg.get("hidden_sizes", []),
-            "vf": critic_cfg.get("hidden_sizes", []),
-        }
-    else:
-        net_arch = {
-            "pi": actor_cfg.get("hidden_sizes", []),
-            "qf": critic_cfg.get("hidden_sizes", []),
-        }
+    # SAC uses pi (actor) and qf (Q-function) architecture
+    net_arch: dict[str, Any] = {
+        "pi": actor_cfg.get("hidden_sizes", []),
+        "qf": critic_cfg.get("hidden_sizes", []),
+    }
 
     policy_kwargs: dict[str, Any] = {
         "net_arch": net_arch,
@@ -171,26 +167,14 @@ def configure_logger(model) -> None:
     model.set_logger(logger)
 
 
-def _init_model(algo_name: str, algo_cfg: dict[str, Any], policy_kwargs: dict[str, Any], train_env, seed: int):
-    if algo_name == "ppo":
-        return PPO(
-            policy="MultiInputPolicy",
-            env=train_env,
-            learning_rate=float(algo_cfg["lr"]),
-            n_steps=int(algo_cfg["n_steps"]),
-            batch_size=int(algo_cfg["batch_size"]),
-            n_epochs=int(algo_cfg["n_epochs"]),
-            gamma=float(algo_cfg["gamma"]),
-            gae_lambda=float(algo_cfg["gae_lambda"]),
-            clip_range=float(algo_cfg["clip_range"]),
-            ent_coef=float(algo_cfg["ent_coef"]),
-            vf_coef=float(algo_cfg["vf_coef"]),
-            max_grad_norm=float(algo_cfg["max_grad_norm"]),
-            policy_kwargs=policy_kwargs,
-            verbose=1,
-            seed=seed,
-            tensorboard_log="tb_logs",
-        )
+def _init_model(
+    algo_name: str,
+    algo_cfg: dict[str, Any],
+    policy_kwargs: dict[str, Any],
+    train_env,
+    seed: int,
+):
+    """Initialize SAC model with given configuration."""
     return SAC(
         policy="MultiInputPolicy",
         env=train_env,
@@ -212,7 +196,9 @@ def _init_model(algo_name: str, algo_cfg: dict[str, Any], policy_kwargs: dict[st
 
 
 def train_with_algo(cfg: DictConfig, algo_name: str) -> None:
-    env_cfg, robot_cfg, reward_cfg, algo_cfg, network_cfg, wandb_cfg, run_cfg = resolve_cfg(cfg)
+    env_cfg, robot_cfg, reward_cfg, algo_cfg, network_cfg, wandb_cfg, run_cfg = (
+        resolve_cfg(cfg)
+    )
 
     with open("resolved.yaml", "w", encoding="utf-8") as f:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
@@ -275,7 +261,9 @@ def train_with_algo(cfg: DictConfig, algo_name: str) -> None:
 
     if isinstance(train_env, VecNormalize):
         train_env.save("final/vecnorm_final.pkl")
-        if os.path.exists("best/best_model.zip") and not os.path.exists("best/vecnorm_best.pkl"):
+        if os.path.exists("best/best_model.zip") and not os.path.exists(
+            "best/vecnorm_best.pkl"
+        ):
             os.makedirs("best", exist_ok=True)
             train_env.save("best/vecnorm_best.pkl")
 

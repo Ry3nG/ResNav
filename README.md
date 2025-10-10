@@ -1,6 +1,6 @@
 # Unified AMR Navigation via Residual RL
 
-Residual policy + conventional tracker for AMR local navigation in a 2D factory map. The RL agent outputs a residual action on top of Pure Pursuit. The stack is Gymnasium + Stable‑Baselines3 (PPO) with Hydra configs, VecEnv, and Weights & Biases logging. Baseline includes Pure Pursuit.
+Residual policy + conventional tracker for AMR local navigation in a 2D factory map. The RL agent outputs a residual action on top of Pure Pursuit. The stack is Gymnasium + Stable‑Baselines3 (SAC) with Hydra configs, VecEnv, and Weights & Biases logging. Baseline includes Pure Pursuit.
 
 ## Key Features
 - Residual control: `u_final = clip(u_track + Δu)`
@@ -44,18 +44,18 @@ configs/                 # Hydra config groups
 
 ## Configuration
 
+The repository uses the best-performing configuration by default:
+
 | Component | Config File | Description |
 |-----------|-------------|-------------|
-| Environment | `configs/env/blockage.yaml` | Map, LiDAR, wrappers |
-| Robot | `configs/robot/default.yaml` | Limits (`v_min`, `v_max`, `w_max`), controller, safety margin |
-| Reward | `configs/reward/default.yaml` | Sparse, progress, path, effort |
-| PPO | `configs/algo/ppo.yaml` | Learning rate, batch size, etc. |
-| Network | `configs/network/default.yaml` | MLP sizes, activations |
-| WandB | `configs/wandb/default.yaml` | Project, mode, tags |
+| Environment | `configs/env/blockage.yaml` | Corridor map with temporary blockages |
+| Robot | `configs/robot/allow_reverse.yaml` | Allows reverse motion (`v_min: -0.3`) |
+| Reward | `configs/reward/lower_w_path.yaml` | Balanced path/effort weights |
+| Algorithm | `configs/algo/sac.yaml` | SAC hyperparameters |
+| Network | `configs/network/lidar_cnn.yaml` | 1D CNN for LiDAR processing |
+| WandB | `configs/wandb/default.yaml` | Experiment tracking |
 
-### Adding New Maps Quickly
-- `ScenarioManager` now switches on `env.name`; `name: t_junction` is provided in `configs/env/t_junction.yaml`.
-- For a step-by-step recipe (scenario generator + config glue), read `docs/ARCHITECTURE.md#adding-a-new-map`.
+All defaults are set in `configs/config.yaml`. You can override individual components via Hydra if needed for experimentation.
 
 ## Design Overview
 
@@ -93,3 +93,4 @@ Reward schema exposed per step (for HUD/logging):
 - **Python 3.10+ required**: The codebase uses modern type hints (`tuple[...]`, `dict[...]`, `list[...]`) via `from __future__ import annotations`.
 - **Pre-commit hooks**: Run `pre-commit install` to enable automatic linting (ruff, black, mypy) on commit.
 - **Package structure**: Installable via `pip install -e .` for clean imports in Hydra subprocess workers.
+- **Training**: Use `python training/train_sac.py` with optional Hydra overrides (e.g., `seed=42 run.total_timesteps=2000000`).

@@ -1,9 +1,9 @@
 defaults:
   - env: blockage
-  - robot: default
-  - reward: default
-  - algo: ppo
-  - network: default
+  - robot: allow_reverse
+  - reward: lower_w_path
+  - algo: sac
+  - network: lidar_cnn
   - wandb: default
   - _self_
 

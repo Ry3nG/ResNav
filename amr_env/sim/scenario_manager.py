@@ -15,7 +15,9 @@ from .scenarios import BlockageScenarioConfig, create_blockage_scenario
 class ScenarioManager:
     """Simple scenario manager with lightweight scenario selection."""
 
-    def __init__(self, env_cfg: dict[str, Any], robot_radius_m: float | None = None) -> None:
+    def __init__(
+        self, env_cfg: dict[str, Any], robot_radius_m: float | None = None
+    ) -> None:
         """Initialize with Hydra-like env config dictionary.
 
         Expected keys under env_cfg:
@@ -70,7 +72,15 @@ class ScenarioManager:
             num_pallets_max=nmax,
         )
 
-    def sample(self) -> tuple[np.ndarray, np.ndarray, tuple[float, float, float], tuple[float, float], dict[str, Any]]:
+    def sample(
+        self,
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        tuple[float, float, float],
+        tuple[float, float],
+        dict[str, Any],
+    ]:
         """Sample a scenario.
 
         Returns:
@@ -79,28 +89,10 @@ class ScenarioManager:
         if self._scenario_name == "blockage":
             cfg = self._build_blockage_cfg()
             generator = create_blockage_scenario
-        elif self._scenario_name == "t_junction":
-            from .scenarios_tjunction import TJunctionConfig, create_tjunction
-
-            map_cfg = self.env_cfg["map"]
-            size_x = float(map_cfg["size_m"][0])
-            size_y = float(map_cfg["size_m"][1])
-            corridor_raw = map_cfg["corridor_width_m"]
-            corridor_w = float(corridor_raw[0] if isinstance(corridor_raw, (list, tuple)) else corridor_raw)
-            goal_margin = float(map_cfg["goal_margin_x_m"])
-            cfg = TJunctionConfig(
-                map_width_m=size_x,
-                map_height_m=size_y,
-                corridor_w_m=corridor_w,
-                wall_th_m=float(map_cfg["wall_thickness_m"]),
-                resolution_m=float(map_cfg["resolution_m"]),
-                waypoint_step_m=float(map_cfg["waypoint_step_m"]),
-                start_x_m=float(map_cfg["start_x_m"]),
-                goal_x_m=size_x - goal_margin,
-            )
-            generator = create_tjunction
         else:
-            raise NotImplementedError(f"Unknown scenario '{self._scenario_name}'")
+            raise NotImplementedError(
+                f"Unknown scenario '{self._scenario_name}'. Only 'blockage' is supported."
+            )
 
         # Try to generate a feasible scenario with retries
         max_retries = 5
@@ -117,8 +109,13 @@ class ScenarioManager:
         # If all retries failed, return the last attempt (fallback)
         return grid, waypoints, start_pose, goal_xy, info
 
-    def _is_path_feasible(self, grid: np.ndarray, start_pose: tuple[float, float, float],
-                          goal_xy: tuple[float, float], resolution: float) -> bool:
+    def _is_path_feasible(
+        self,
+        grid: np.ndarray,
+        start_pose: tuple[float, float, float],
+        goal_xy: tuple[float, float],
+        resolution: float,
+    ) -> bool:
         """Path feasibility check using BFS with robot radius inflation.
 
         Args:
@@ -147,8 +144,16 @@ class ScenarioManager:
         H, W = grid_inflated.shape
 
         # Check bounds
-        if (start_i < 0 or start_i >= H or start_j < 0 or start_j >= W or
-            goal_i < 0 or goal_i >= H or goal_j < 0 or goal_j >= W):
+        if (
+            start_i < 0
+            or start_i >= H
+            or start_j < 0
+            or start_j >= W
+            or goal_i < 0
+            or goal_i >= H
+            or goal_j < 0
+            or goal_j >= W
+        ):
             return False
 
         # Check if start/goal are in obstacles

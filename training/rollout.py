@@ -21,7 +21,8 @@ from amr_env.viz.pygame_renderer import Renderer, VizConfig
 from amr_env.viz.video import save_mp4
 from amr_env.control.pure_pursuit import compute_u_track
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from stable_baselines3 import PPO, SAC
+from stable_baselines3 import SAC
+
 
 def resolve_model_and_vecnorm(path: str) -> tuple[str, str | None, str]:
     """Given a directory or zip path, resolve (model_zip, vecnorm_pkl|None, run_dir).
@@ -75,40 +76,11 @@ def resolve_model_and_vecnorm(path: str) -> tuple[str, str | None, str]:
 def detect_algo_from_run(run_dir: str) -> str:
     """Detect algorithm used for a given run directory.
 
-    Priority:
-      1) resolved.yaml (full config) if present
-      2) .hydra/overrides.yaml (look for a '- algo=...' line)
-      3) Heuristic on algo block keys (buffer_size→sac; n_steps→ppo)
-      4) Default 'ppo'
+    Since we only use SAC now, always returns 'sac'.
+    Kept for backward compatibility with existing run directories.
     """
-    # 1) Try resolved or hydra config
-    cfg = load_resolved_run_config(run_dir)
-    try:
-        if isinstance(cfg, dict) and "algo" in cfg and isinstance(cfg["algo"], dict):
-            algo_block = cfg["algo"]
-            # Heuristic: SAC has buffer_size/tau; PPO has n_steps
-            if any(k in algo_block for k in ("buffer_size", "tau", "learning_starts")):
-                return "sac"
-            if any(k in algo_block for k in ("n_steps", "gae_lambda", "clip_range")):
-                return "ppo"
-    except Exception:
-        pass
+    return "sac"
 
-    # 2) Check overrides
-    try:
-        from pathlib import Path as _P
-        ovr = _P(run_dir) / ".hydra" / "overrides.yaml"
-        if ovr.exists():
-            text = ovr.read_text(encoding="utf-8", errors="ignore")
-            for line in text.splitlines():
-                s = line.strip().lstrip("- ")
-                if s.startswith("algo="):
-                    return s.split("=", 1)[1].strip()
-    except Exception:
-        pass
-
-    # 3) Default
-    return "ppo"
 
 def main():
     parser = argparse.ArgumentParser()
@@ -212,13 +184,13 @@ def main():
     base_env = base_env_ref.envs[0]
     model = None
     if args.model:
-        # Detect algorithm used for this run
-        algo_name = detect_algo_from_run(run_dir)
-        ModelClass = SAC if algo_name == "sac" else PPO
-        print(f"[INFO] Detected algorithm: {algo_name.upper()} → using {ModelClass.__name__}")
-        model = ModelClass.load(args.model, env=venv, print_system_info=False)
+        # Load SAC model
+        print(f"[INFO] Loading SAC model from: {args.model}")
+        model = SAC.load(args.model, env=venv, print_system_info=False)
     else:
-        print("[INFO] No model provided: using zero-residual (pure pursuit) for playback.")
+        print(
+            "[INFO] No model provided: using zero-residual (pure pursuit) for playback."
+        )
 
     frames = []
     if args.render or args.record:

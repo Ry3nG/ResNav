@@ -22,16 +22,16 @@ Data flows sim → env → policy → renderer/loggers, always in meters/radians
 - Action: residual twist `(Δv, Δω)` added to the Pure Pursuit tracker output and clipped to robot limits.
 
 ## Adding a New Map
-1. **Scenario generator**: create `amr_env/sim/scenarios_<name>.py` with a dataclass config and a `create_<name>` function returning `(grid, waypoints, start_pose, goal_xy, info)`. See `scenarios_tjunction.py` for a 50-line template.
+1. **Scenario generator**: create `amr_env/sim/scenarios_<name>.py` with a dataclass config and a `create_<name>` function returning `(grid, waypoints, start_pose, goal_xy, info)`. See `scenarios.py` (blockage) for reference.
 2. **Scenario manager hook**: extend `ScenarioManager.sample` with a new branch keyed on `env.name`, instantiate your config from the Hydra map block, and set `generator = create_<name>`.
-3. **Config file**: add `configs/env/<name>.yaml` with `name: <name>` and whatever map keys your generator expects. Reuse existing sections (wrappers, lidar, viz) to stay consistent.
-4. **Train or roll out**: point `python training/train_ppo.py env=<name>` or `python training/rollout.py --env_cfg configs/env/<name>.yaml` once the config is in place.
+3. **Config file**: add `configs/env/<name>.yaml` with `name: <name>` and whatever map keys your generator expects. Reuse existing sections (wrappers, lidar, viz) from `blockage.yaml`.
+4. **Train or roll out**: point `python training/train_sac.py env=<name>` or `python training/rollout.py --env_cfg configs/env/<name>.yaml` once the config is in place.
 
 ## Reproducing Results
 1. `conda env create -f environment.yml && conda activate amr-nav`
 2. `pip install -e .`
-3. `python training/train_ppo.py` (defaults to blockage) or `python training/train_ppo.py env=t_junction` for the new scenario.
-4. Use `training/rollout.py --render` or `--record out.mp4` to inspect trajectories.
+3. `python training/train_sac.py` (uses optimized defaults: SAC + allow_reverse + lower_w_path + lidar_cnn + blockage)
+4. Use `training/rollout.py --model runs/<timestamp>/best --render` or `--record out.mp4` to inspect trajectories.
 
 ## Code Conventions
 - **Type hints**: Uses Python 3.10+ built-in generics (`tuple[...]`, `dict[...]`) with `from __future__ import annotations` for forward compatibility.
