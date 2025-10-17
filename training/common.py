@@ -62,12 +62,10 @@ def maybe_init_wandb(wandb_cfg: dict[str, Any], extra_config: dict[str, Any]):
     run = wandb.init(
         project=wandb_cfg.get("project"),
         entity=wandb_cfg.get("entity"),
-        group=wandb_cfg.get("group"),
         mode=mode,
         sync_tensorboard=True,
         dir=".",
         config=extra_config,
-        tags=wandb_cfg.get("tags", []),
     )
     return run
 
