@@ -54,15 +54,18 @@ dynamic_movers:
   speed_mps: [0.6, 1.2]
   lane_offset_m: 0.8
   spawn_jitter_m: 0.3
+  spawn_time_range_s: [0.0, 6.0]
   from_right:
     count_min: 1
     count_max: 3
     lanes: [center, up, down]
+    spawn_time_range_s: [0.0, 4.0]
   from_holes:
     enabled: true
     count_min: 1
     count_max: 2
     hole_choice: [top, bottom, both]
+    spawn_time_range_s: [2.0, 8.0]
 
 viz:
   show_inflated: false

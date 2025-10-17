@@ -195,6 +195,8 @@ class ResidualNavEnv(gym.Env):
         inflate_extra = self.radius_m
         for mover in self._movers:
             mover.step(dt, self._t)
+            if not mover.active or self._t < mover.spawn_t:
+                continue
             movers.rasterize_disc(
                 self._grid_dyn_raw,
                 mover.x,

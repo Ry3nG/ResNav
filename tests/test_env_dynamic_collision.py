@@ -44,8 +44,14 @@ def test_env_detects_dynamic_collision(monkeypatch):
             "speed_mps": [0.0, 0.0],
             "lane_offset_m": 0.1,
             "spawn_jitter_m": 0.0,
+            "spawn_time_range_s": [0.0, 0.0],
             "from_right": {"count_min": 0, "count_max": 0, "lanes": ["center"]},
-            "from_holes": {"enabled": False, "count_min": 0, "count_max": 0},
+            "from_holes": {
+                "enabled": False,
+                "count_min": 0,
+                "count_max": 0,
+                "spawn_time_range_s": [0.0, 0.0],
+            },
         },
         "viz": {"show_inflated": False, "show_lidar": False, "show_actions": False, "fps": 20},
     }

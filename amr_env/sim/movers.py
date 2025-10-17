@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import math
 
 import numpy as np
@@ -66,6 +66,21 @@ def sample_movers_for_omcf(
     map_width = float(env_cfg["map"]["size_m"][0])
     movers: List[DiscMover] = []
 
+    def _spawn_range(section: dict) -> Tuple[float, float]:
+        rng_vals = section.get("spawn_time_range_s")
+        if isinstance(rng_vals, (list, tuple)) and len(rng_vals) == 2:
+            lo, hi = float(rng_vals[0]), float(rng_vals[1])
+            if lo > hi:
+                lo, hi = hi, lo
+            return lo, hi
+        default = dm_cfg.get("spawn_time_range_s", [0.0, 0.0])
+        if isinstance(default, (list, tuple)) and len(default) == 2:
+            lo, hi = float(default[0]), float(default[1])
+            if lo > hi:
+                lo, hi = hi, lo
+            return lo, hi
+        return (0.0, 0.0)
+
     # Movers from the right boundary (counterflow).
     fr_cfg = dm_cfg.get("from_right", {})
     n_fr = int(
@@ -89,6 +104,7 @@ def sample_movers_for_omcf(
         base_y = float(r.choice(lane_choices)) if lane_choices else cy
         y0 = base_y + float(r.uniform(-spawn_jitter, spawn_jitter))
         speed = float(r.uniform(speed_lo, speed_hi))
+        delay_lo, delay_hi = _spawn_range(fr_cfg)
         movers.append(
             DiscMover(
                 x=map_width - 1e-3,
@@ -96,6 +112,7 @@ def sample_movers_for_omcf(
                 vx=-speed,
                 vy=0.0,
                 radius_m=radius,
+                spawn_t=float(r.uniform(delay_lo, delay_hi)),
             )
         )
 
@@ -121,6 +138,7 @@ def sample_movers_for_omcf(
             y0 = y_edge + (0.6 if side_top else -0.6)
             speed = float(r.uniform(speed_lo, speed_hi))
             vy = -speed if side_top else speed
+            delay_lo, delay_hi = _spawn_range(fh_cfg)
             movers.append(
                 DiscMover(
                     x=x_h,
@@ -128,6 +146,7 @@ def sample_movers_for_omcf(
                     vx=0.0,
                     vy=vy,
                     radius_m=radius,
+                    spawn_t=float(r.uniform(delay_lo, delay_hi)),
                 )
             )
 
