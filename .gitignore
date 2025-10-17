@@ -162,7 +162,9 @@ logs/
 # Experiments and results
 experiments/
 results/
-runs/
+runs/**
+!runs/
+!runs/**/
 wandb/
 mlruns/
 
@@ -247,7 +249,9 @@ dist/
 *.egg-info/
 
 # Project Artifacts
-runs/
+runs/**
+!runs/
+!runs/**/
 outputs/
 wandb/
 videos/
@@ -263,3 +267,7 @@ logs/
 configs/wandb/*
 !configs/wandb/.gitkeep
 !configs/wandb/default.yaml
+
+# Track specific run directory despite global runs/ ignore
+!runs/demo_1017/
+!runs/demo_1017/**

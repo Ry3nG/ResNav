@@ -1,0 +1,9 @@
+- env=blockage
+- robot=allow_reverse
+- reward=lower_w_path
+- algo=sac
+- network=lidar_cnn
+- wandb=default
+- run.vec_envs=20
+- run.total_timesteps=10000000
+- run.seed=7399608

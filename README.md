@@ -16,6 +16,33 @@ make amr
 ```
 The interactive launcher guides you to train and render models.
 
+### 3) Launch
+```bash
+make amr
+```
+The interactive launcher guides you to train and render models. For demo, you can simply use the trained model in the ***runs*** folder.
+### 4) Render
+
+Enter the parameters like below
+```bash
+Select [0-2] (default 0): 1
+
+Examples:
+runs/demo_1017/best
+Model directory (best/final/ckpt_step_N) (default ''): runs/demo_1017/best
+```
+This model's **TRAINING CONFIGURATION** will then be displayed.
+Then choose the render parameters. A example is shown below.
+```bash
+Steps (default '600'): 200
+Seed (default '42'): 567
+Output MP4 filename (saves to run/outputs/) (default 'demo'): try
+```
+Use different **seed** can show the path of mobile robot in different maps.
+
+Then a mp4 video can be found in model's file. For example, if input same as above, the video will in */runs/demo_1017/outputs*
+
+
 ## Package Organization
 
 ## Project Structure
