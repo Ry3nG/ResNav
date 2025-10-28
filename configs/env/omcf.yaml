@@ -16,7 +16,7 @@ map:
   holes:
     enabled: true
     count_pairs: 2
-    x_range_m: [8.0, 17.5]
+    x_range_m: [5.0, 15.0]
     opening_len_m: 1.6
     pair_x_candidates_m: []
     min_spacing_m: 2.0
@@ -38,7 +38,7 @@ wrappers:
   frame_stack:
     enabled: true
     keys: [lidar]
-    k: 4
+    k: 12
     flatten: true
 
 lidar:

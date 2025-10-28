@@ -219,9 +219,7 @@ class ResidualNavEnv(gym.Env):
             self._grid_infl_curr = None
             return
         if self._grid_dyn_raw is not None:
-            self._grid_raw_curr = np.logical_or(
-                scenario.grid_raw, self._grid_dyn_raw
-            )
+            self._grid_raw_curr = np.logical_or(scenario.grid_raw, self._grid_dyn_raw)
         else:
             self._grid_raw_curr = scenario.grid_raw
         if self._grid_dyn_infl is not None:
@@ -259,8 +257,6 @@ class ResidualNavEnv(gym.Env):
         v0 = v00 * (1.0 - dj) + v01 * dj
         v1 = v10 * (1.0 - dj) + v11 * dj
         return float(v0 * (1.0 - di) + v1 * di)
-
-    # TODO: add front-arc sampling mode when safety.mode == "front_arc".
 
     def step(self, action: np.ndarray):
         if self._scenario is None:
