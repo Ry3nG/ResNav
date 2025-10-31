@@ -14,7 +14,7 @@ from stable_baselines3.common.logger import configure
 from training.feature_extractors import LiDAR1DConvExtractor
 
 
-__all__ = ["build_policy_kwargs", "configure_logger"]
+__all__ = ["build_policy_kwargs", "_init_model", "configure_logger"]
 
 
 def build_policy_kwargs(
@@ -55,7 +55,7 @@ def build_policy_kwargs(
         frame_stack = int(env_cfg["wrappers"]["frame_stack"]["k"])
         beams = int(env_cfg["lidar"]["beams"])
         policy_kwargs["features_extractor_class"] = LiDAR1DConvExtractor
-        policy_kwargs["features_extractor_kwargs"] = {
+        fe_kwargs: dict[str, Any] = {
             "lidar_k": int(fe_cfg.get("lidar_k", frame_stack)),
             "lidar_beams": int(fe_cfg.get("lidar_beams", beams)),
             "lidar_channels": list(fe_cfg.get("lidar_channels", [16, 32, 16])),
@@ -63,10 +63,8 @@ def build_policy_kwargs(
             "out_dim": int(fe_cfg.get("out_dim", 128)),
             "kin_dim": int(fe_cfg.get("kin_dim", 16)),
             "path_dim": int(fe_cfg.get("path_dim", 16)),
-            "temporal_enabled": bool(fe_cfg.get("temporal_enabled", False)),
-            "temporal_kernel_size": int(fe_cfg.get("temporal_kernel_size", 3)),
-            "temporal_dilation": int(fe_cfg.get("temporal_dilation", 1)),
         }
+        policy_kwargs["features_extractor_kwargs"] = fe_kwargs
     return policy_kwargs
 
 

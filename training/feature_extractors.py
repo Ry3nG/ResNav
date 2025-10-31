@@ -25,9 +25,6 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
       - out_dim: int, output feature dimension after fusion (default 128)
       - kin_dim: int, feature size for kinematics branch (default 16)
       - path_dim: int, feature size for path branch (default 16)
-      - temporal_enabled: bool, apply optional temporal depthwise conv along K (default False)
-      - temporal_kernel_size: int, kernel size for temporal conv (default 3)
-      - temporal_dilation: int, dilation for temporal conv (default 1)
     """
 
     def __init__(
@@ -40,9 +37,6 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
         out_dim: int = 128,
         kin_dim: int = 16,
         path_dim: int = 16,
-        temporal_enabled: bool = False,
-        temporal_kernel_size: int = 3,
-        temporal_dilation: int = 1,
     ) -> None:
         # Compute total features dim before calling super
         self._out_dim = int(out_dim)
@@ -56,9 +50,6 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
 
         self.lidar_k = int(lidar_k)
         self.lidar_beams = int(lidar_beams)
-        self.temporal_enabled = bool(temporal_enabled)
-        self._temporal_kernel_size = int(temporal_kernel_size)
-        self._temporal_dilation = int(temporal_dilation)
 
         # LiDAR conv spec
         if lidar_channels is None:
@@ -69,7 +60,6 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
 
         layers: list[nn.Module] = []
         in_ch = self.lidar_k  # frames as channels
-        L = self.lidar_beams
         for ch, ks in zip(lidar_channels, kernel_sizes):
             pad = ks // 2
             layers += [nn.Conv1d(in_ch, ch, kernel_size=ks, padding=pad), nn.ReLU()]
@@ -77,24 +67,6 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
         # Adaptive pooling to small fixed length for stability
         layers += [nn.AdaptiveAvgPool1d(8)]
         self.lidar_conv = nn.Sequential(*layers)
-
-        # Optional temporal conv along K (time) dimension using depthwise conv per angle
-        # Only register when enabled to retain strict backward compatibility for checkpoints
-        if self.temporal_enabled:
-            # Input for temporal conv will be shaped as (B, beams, K)
-            # Keep length by padding = dilation * (k-1) // 2
-            k = max(1, self._temporal_kernel_size)
-            d = max(1, self._temporal_dilation)
-            pad_t = (d * (k - 1)) // 2
-            self.temporal_conv = nn.Conv1d(
-                in_channels=self.lidar_beams,
-                out_channels=self.lidar_beams,
-                kernel_size=k,
-                padding=pad_t,
-                dilation=d,
-                groups=self.lidar_beams,
-            )
-            self.temporal_act = nn.ReLU()
 
         # Branch heads for kin/path (tiny MLPs)
         self.kin_head = nn.Sequential(nn.Linear(4, kin_dim), nn.ReLU())
@@ -120,14 +92,6 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
             lidar.shape[1] == self.lidar_k * self.lidar_beams
         ), f"Unexpected lidar dim {lidar.shape[1]} ≠ {self.lidar_k}*{self.lidar_beams}"
         lidar = lidar.view(B, self.lidar_k, self.lidar_beams)
-        # Optional temporal conv along K (time) per angle beam
-        if self.temporal_enabled:
-            # (B, K, beams) -> (B, beams, K)
-            lidar_t = lidar.transpose(1, 2)
-            lidar_t = self.temporal_conv(lidar_t)
-            lidar_t = self.temporal_act(lidar_t)
-            # (B, beams, K) -> (B, K, beams)
-            lidar = lidar_t.transpose(1, 2)
         # Conv over beams with frames as channels
         x_lidar = self.lidar_conv(lidar)  # (B, C, 8)
         x_lidar = torch.flatten(x_lidar, start_dim=1)  # (B, C*8)
