@@ -271,3 +271,5 @@ configs/wandb/*
 # Track specific run directory despite global runs/ ignore
 !runs/demo_1017/
 !runs/demo_1017/**
+!runs/demo_1031/
+!runs/demo_1031/**

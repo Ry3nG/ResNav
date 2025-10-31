@@ -114,20 +114,22 @@ def main():
         model_zip, vecnorm_pkl, run_dir = resolve_model_and_vecnorm(args.model)
         # Load run config if available
         cfg = load_resolved_run_config(run_dir)
+
+        # Use command-line config if explicitly provided, else fallback to run config
         env_cfg: dict[str, Any] = (
-            cfg["env"]
-            if isinstance(cfg, dict) and "env" in cfg
-            else load_config_dict(args.env_cfg)
+            load_config_dict(args.env_cfg)
+            if args.env_cfg != "configs/env/blockage.yaml"  # Non-default means user wants override
+            else (cfg["env"] if isinstance(cfg, dict) and "env" in cfg else load_config_dict(args.env_cfg))
         )
         robot_cfg: dict[str, Any] = (
-            cfg["robot"]
-            if isinstance(cfg, dict) and "robot" in cfg
-            else load_config_dict(args.robot_cfg)
+            load_config_dict(args.robot_cfg)
+            if args.robot_cfg != "configs/robot/default.yaml"
+            else (cfg["robot"] if isinstance(cfg, dict) and "robot" in cfg else load_config_dict(args.robot_cfg))
         )
         reward_cfg: dict[str, Any] = (
-            cfg["reward"]
-            if isinstance(cfg, dict) and "reward" in cfg
-            else load_config_dict(args.reward_cfg)
+            load_config_dict(args.reward_cfg)
+            if args.reward_cfg != "configs/reward/default.yaml"
+            else (cfg["reward"] if isinstance(cfg, dict) and "reward" in cfg else load_config_dict(args.reward_cfg))
         )
         run_cfg: dict[str, Any]
         if isinstance(cfg, dict) and "run" in cfg:
@@ -298,6 +300,7 @@ def main():
                 path=payload.get("waypoints"),
                 actions=actions_data,
                 hud=reward_breakdown,
+                movers=payload.get("movers", []),
             )
             if args.record:
                 # Convert pygame Surface to numpy array immediately

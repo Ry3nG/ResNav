@@ -125,8 +125,8 @@ def build_train_command() -> tuple[str, str]:
     wandb = prompt_choice("Weights & Biases", find_group_options("wandb"), 0)
 
     # Run params
-    n_envs = prompt_text("Vec envs", "16")
-    timesteps = prompt_text("Total timesteps", "200000")
+    n_envs = prompt_text("Vec envs", "20")
+    timesteps = prompt_text("Total timesteps", "10000000")
     seed = prompt_text("Seed", "0")
 
     overrides = [
@@ -181,7 +181,7 @@ def build_render_command() -> tuple[str, str]:
             "[WARN] No VecNormalize stats found in the selected directory; playback uses raw observations"
         )
 
-    steps = prompt_text("Steps", "600")
+    steps = prompt_text("Steps", "300")
     seed = prompt_text("Seed", "42")
     record_name = prompt_text("Output MP4 filename (saves to run/outputs/)", "demo")
 

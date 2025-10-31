@@ -34,7 +34,7 @@ Model directory (best/final/ckpt_step_N) (default ''): runs/demo_1017/best
 This model's **TRAINING CONFIGURATION** will then be displayed.
 Then choose the render parameters. A example is shown below.
 ```bash
-Steps (default '600'): 200
+Steps (default '300'): 200
 Seed (default '42'): 567
 Output MP4 filename (saves to run/outputs/) (default 'demo'): try
 ```

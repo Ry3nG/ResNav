@@ -127,7 +127,9 @@ class ResidualNavEnv(gym.Env):
         self._grid_dyn_infl: np.ndarray | None = None
         self._grid_raw_curr: np.ndarray | None = None
         self._grid_infl_curr: np.ndarray | None = None
-        self._movers: list[movers.DiscMover] = []
+        self._active_movers: list[movers.DiscMover] = []
+        self._next_lateral_spawn_t = 0.0
+        self._next_longitudinal_spawn_t = 0.0
         self._t = 0.0
 
     def seed(self, seed: int | None = None):
@@ -160,7 +162,7 @@ class ResidualNavEnv(gym.Env):
         H, W = self._scenario.grid_raw.shape
         self._grid_dyn_raw = np.zeros((H, W), dtype=bool)
         self._grid_dyn_infl = np.zeros((H, W), dtype=bool)
-        self._spawn_movers()
+        self._init_spawner()
         if self.env_cfg.get("dynamic_movers", {}).get("enabled", False):
             self._update_dynamic_grids(0.0)
         self._compose_current_grids()
@@ -169,40 +171,127 @@ class ResidualNavEnv(gym.Env):
         # Do not set SB3's episode info; RecordEpisodeStatistics will populate it
         return obs, {}
 
-    def _spawn_movers(self) -> None:
-        self._movers = []
+    def _init_spawner(self) -> None:
+        """Initialize Poisson spawner with timers set in the future."""
+        self._active_movers = []
+
         dyn_cfg = self.env_cfg.get("dynamic_movers", {})
         if not dyn_cfg.get("enabled", False):
             return
+
         scenario_name = str(self.env_cfg.get("name", "blockage")).lower()
         if scenario_name != "omcf":
             return
+
         rng = getattr(self, "np_random", None)
         if rng is None:
             rng = np.random.default_rng()
-        # Scenario info carries hole locations and corridor bounds.
-        self._movers = movers.sample_movers_for_omcf(
-            self.env_cfg,
-            self._scenario.info,
-            rng,
+
+        # Read spawn rates
+        lat_cfg = dyn_cfg.get("lateral", {})
+        lon_cfg = dyn_cfg.get("longitudinal", {})
+        rate_lat = max(1e-6, float(lat_cfg.get("spawn_rate_hz", 0.15)))
+        rate_lon = max(1e-6, float(lon_cfg.get("spawn_rate_hz", 0.10)))
+
+        # Initialize timers to future (critical: clean start on reset)
+        self._next_lateral_spawn_t = self._t + float(rng.exponential(1.0 / rate_lat))
+        self._next_longitudinal_spawn_t = self._t + float(
+            rng.exponential(1.0 / rate_lon)
         )
 
     def _update_dynamic_grids(self, dt: float) -> None:
+        """Four-phase update: spawn → step → cull → rasterize."""
         if self._grid_dyn_raw is None or self._grid_dyn_infl is None:
             return
+
+        dyn_cfg = self.env_cfg.get("dynamic_movers", {})
+        if not dyn_cfg.get("enabled", False):
+            return
+
+        rng = getattr(self, "np_random", None)
+        if rng is None:
+            rng = np.random.default_rng()
+
+        # Read guardrail parameters
+        max_concurrent = int(dyn_cfg.get("max_concurrent", 30))
+        kill_margin = float(dyn_cfg.get("kill_margin_m", 0.5))
+        reflect_walls = bool(dyn_cfg.get("reflect_walls", True))
+        v_lo, v_hi = dyn_cfg.get("velocity_range_mps", [0.4, 1.5])
+
+        map_width = float(self.env_cfg["map"]["size_m"][0])
+        map_height = float(self.env_cfg["map"]["size_m"][1])
+        y_top = float(self._scenario.info.get("y_top", map_height / 2 + 2))
+        y_bot = float(self._scenario.info.get("y_bot", map_height / 2 - 2))
+
+        lat_cfg = dyn_cfg.get("lateral", {})
+        lon_cfg = dyn_cfg.get("longitudinal", {})
+        rate_lat = max(1e-6, float(lat_cfg.get("spawn_rate_hz", 0.15)))
+        rate_lon = max(1e-6, float(lon_cfg.get("spawn_rate_hz", 0.10)))
+
+        # === Phase 1: Spawn new movers ===
+        agent_pose = self._model.as_pose()
+
+        # Lateral spawning
+        while self._t >= self._next_lateral_spawn_t:
+            if len(self._active_movers) < max_concurrent:
+                new_mover = movers.spawn_lateral_mover(
+                    self.env_cfg,
+                    self._scenario.info,
+                    self._scenario.grid_inflated,
+                    self.resolution_m,
+                    agent_pose,
+                    self._t,
+                    rng,
+                )
+                if new_mover is not None:
+                    self._active_movers.append(new_mover)
+            # Advance timer regardless of success/failure (avoid starvation)
+            self._next_lateral_spawn_t += float(rng.exponential(1.0 / rate_lat))
+
+        # Longitudinal spawning
+        if lon_cfg.get("spawn_from_holes", True):
+            while self._t >= self._next_longitudinal_spawn_t:
+                if len(self._active_movers) < max_concurrent:
+                    new_mover = movers.spawn_longitudinal_mover(
+                        self.env_cfg,
+                        self._scenario.info,
+                        self._scenario.grid_inflated,
+                        self.resolution_m,
+                        agent_pose,
+                        self._t,
+                        rng,
+                    )
+                    if new_mover is not None:
+                        self._active_movers.append(new_mover)
+                self._next_longitudinal_spawn_t += float(rng.exponential(1.0 / rate_lon))
+
+        # === Phase 2: Step all movers ===
+        for mover in self._active_movers:
+            mover.step(dt, self._t, v_lo, v_hi, y_bot, y_top, reflect_walls)
+
+        # === Phase 3: Cull expired/out-of-bounds movers ===
+        for mover in self._active_movers:
+            # TTL already handled in mover.step(), check OOB here
+            if (
+                mover.x < -kill_margin
+                or mover.x > map_width + kill_margin
+                or mover.y < -kill_margin
+                or mover.y > map_height + kill_margin
+            ):
+                mover.active = False
+
+        self._active_movers = [m for m in self._active_movers if m.active]
+
+        # === Phase 4: Rasterize to grids ===
         self._grid_dyn_raw.fill(False)
         self._grid_dyn_infl.fill(False)
         inflate_extra = self.radius_m
-        for mover in self._movers:
-            mover.step(dt, self._t)
-            if not mover.active or self._t < mover.spawn_t:
+
+        for mover in self._active_movers:
+            if self._t < mover.spawn_t:  # Double-check spawn time
                 continue
             movers.rasterize_disc(
-                self._grid_dyn_raw,
-                mover.x,
-                mover.y,
-                mover.radius_m,
-                self.resolution_m,
+                self._grid_dyn_raw, mover.x, mover.y, mover.radius_m, self.resolution_m
             )
             movers.rasterize_disc(
                 self._grid_dyn_infl,
@@ -364,6 +453,10 @@ class ResidualNavEnv(gym.Env):
             "obs": self._last_obs if self._last_obs else self._get_obs(),
             "reward_terms": dict(self._last_reward_terms),
             "scenario_info": {} if scenario is None else dict(scenario.info),
+            "active_movers_count": len(self._active_movers),
+            "next_spawn_eta_lat": max(0.0, self._next_lateral_spawn_t - self._t),
+            "next_spawn_eta_lon": max(0.0, self._next_longitudinal_spawn_t - self._t),
+            "movers": [m for m in self._active_movers if m.active and self._t >= m.spawn_t],  # Active visible movers
         }
         return payload
 

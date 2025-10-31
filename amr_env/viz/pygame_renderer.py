@@ -37,6 +37,9 @@ class Colors:
     action_delta: tuple[int, int, int] = (255, 120, 0)
     action_final: tuple[int, int, int] = (255, 0, 255)
     text: tuple[int, int, int] = (255, 255, 255)
+    # Dynamic mover colors
+    mover_lateral: tuple[int, int, int] = (255, 69, 0)  # Red-Orange (counterflow danger)
+    mover_longitudinal: tuple[int, int, int] = (138, 43, 226)  # Blue-Violet (merge from side)
 
 
 @dataclass
@@ -177,6 +180,31 @@ class Renderer:
             ex_px, ey_px = self.world_to_screen(ex, ey)
             pygame.draw.line(self.screen, color, (sx, sy), (ex_px, ey_px), width=3)
 
+    def draw_movers(self, movers: list) -> None:
+        """Draw dynamic movers with type-specific colors."""
+        for mover in movers:
+            sx, sy = self.world_to_screen(mover.x, mover.y)
+            r_px = int(mover.radius_m * self.scale)
+
+            # Select color based on mover type
+            color = (
+                self.colors.mover_lateral
+                if mover.mover_type == "lateral"
+                else self.colors.mover_longitudinal
+            )
+
+            # Draw filled circle for mover body
+            pygame.draw.circle(self.screen, color, (sx, sy), r_px)
+
+            # Draw velocity vector (optional, for debugging)
+            if hasattr(mover, 'vx') and hasattr(mover, 'vy'):
+                vel_scale = 0.8  # Scale factor for velocity visualization
+                vx_end = mover.x + mover.vx * vel_scale
+                vy_end = mover.y + mover.vy * vel_scale
+                vx_px, vy_px = self.world_to_screen(vx_end, vy_end)
+                # Draw thin white line for velocity direction
+                pygame.draw.line(self.screen, (255, 255, 255), (sx, sy), (vx_px, vy_px), width=1)
+
     def draw_hud(self, text_lines: dict[str, float], y0: int = 10) -> None:
         x, y = 10, y0
         for k, v in text_lines.items():
@@ -198,6 +226,7 @@ class Renderer:
             tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
         ] = None,
         hud: Optional[dict[str, float]] = None,
+        movers: Optional[list] = None,
     ) -> "pygame.Surface":
         self.screen.fill(self.colors.background)
 
@@ -208,6 +237,10 @@ class Renderer:
             self.draw_grid(inflated_grid, self.colors.inflated_grid)
         if path is not None:
             self.draw_path(path, proj, lookahead)
+
+        # Draw dynamic movers (before robot so robot appears on top)
+        if movers is not None:
+            self.draw_movers(movers)
 
         self.draw_robot(pose, radius_m)
 
