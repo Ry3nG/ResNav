@@ -67,7 +67,7 @@ dynamic_movers:
   # Guardrail parameters
   kill_margin_m: 0.5
   max_concurrent: 10
-  reflect_walls: false
+  reflect_walls: true
 
 viz:
   show_inflated: false

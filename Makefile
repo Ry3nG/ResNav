@@ -1,6 +1,6 @@
 ENV_NAME=amr-nav
 
-.PHONY: setup amr
+.PHONY: setup amr demo1031
 
 setup:
 	@echo "[setup] Ensure conda env '$(ENV_NAME)' and install package"
@@ -20,3 +20,13 @@ setup:
 amr:
 	@echo "[amr] Interactive launcher"
 	@conda run -n $(ENV_NAME) --no-capture-output python tools/launcher.py
+
+demo1031:
+	@echo "[demo] Rollout runs/demo_1031 -> runs/demo_1031/outputs/demo.mp4"
+	@conda run -n $(ENV_NAME) --no-capture-output \
+		python training/rollout.py \
+			--model 'runs/demo_1031/best' \
+			--record 'runs/demo_1031/outputs/demo.mp4' \
+			--steps 300 \
+			--deterministic \
+			--seed 20021213

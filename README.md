@@ -2,6 +2,24 @@
 
 Residual policy + conventional tracker for AMR local navigation in a 2D factory map. The RL agent outputs a residual action on top of Pure Pursuit.
 
+## Assignment 2 Demo
+> setup the environment with `make setup` first.
+
+### 1) Try the demo
+> Find the generated video in `runs/demo_1031/outputs/demo.mp4`
+
+```bash
+make demo1031
+```
+This will run `python training/rollout.py --model 'runs/demo_1031/best' --record 'runs/demo_1031/outputs/demo.mp4' --steps 300 --deterministic --seed 20021213` to visualize an example of the trained agent probe and wait in front of a junction with dynamic obstacles.
+
+### 2) Try failure cases
+Activate the environment and run the following command to try failure cases.
+`python training/rollout.py --model 'runs/demo_1031/best' --record 'runs/demo_1031/outputs/demo.mp4' --steps 300 --deterministic --seed 20030413`
+The agent hasn't learned how to back off and wait in a safe place.
+
+
+
 ## Quickstart
 
 ### 1) Setup
@@ -14,14 +32,8 @@ This creates/updates the conda env `amr-nav` from `environment.yml` and runs `pi
 ```bash
 make amr
 ```
-The interactive launcher guides you to train and render models.
-
-### 3) Launch
-```bash
-make amr
-```
 The interactive launcher guides you to train and render models. For demo, you can simply use the trained model in the ***runs*** folder.
-### 4) Render
+### 3) Render
 
 Enter the parameters like below
 ```bash

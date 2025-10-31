@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from amr_env.sim.scenarios_omcf import OMCFConfig, create_omcf_scenario
+from amr_env.sim.scenario_generators import OMCFConfig, create_omcf_scenario
 
 
 def test_holes_create_wall_gaps():

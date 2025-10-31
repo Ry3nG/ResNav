@@ -10,8 +10,8 @@ from dataclasses import dataclass
 import numpy as np
 from collections import deque
 
-from .scenarios import BlockageScenarioConfig, create_blockage_scenario
-from .scenarios_omcf import OMCFConfig, create_omcf_scenario
+from .scenario_generators import BlockageScenarioConfig, create_blockage_scenario
+from .scenario_generators import OMCFConfig, create_omcf_scenario
 from .collision import inflate_grid
 
 

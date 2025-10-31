@@ -3,10 +3,62 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
 import math
 
 import numpy as np
+
+
+@dataclass
+class BlockageScenarioConfig:
+    """Config for a simple corridor with temporary blockages (pallets)."""
+
+    map_width_m: float = 50.0
+    map_height_m: float = 50.0
+    corridor_width_min_m: float = 3.0
+    corridor_width_max_m: float = 4.0
+    wall_thickness_m: float = 0.3
+    pallet_width_m: float = 1.1
+    pallet_length_m: float = 0.6
+    start_x_m: float = 1.0
+    goal_margin_x_m: float = 1.0
+    waypoint_step_m: float = 0.3
+    resolution_m: float = 0.2
+    min_passage_m: float = 0.7  # e.g., robot_diameter + 0.2 (0.5 + 0.2)
+    min_pallet_x_offset_m: float = 0.6
+    num_pallets_min: int = 1
+    num_pallets_max: int = 1
+
+
+@dataclass
+class OMCFConfig:
+    map_width_m: float = 20.0
+    map_height_m: float = 20.0
+    corridor_width_min_m: float = 3.5
+    corridor_width_max_m: float = 4.0
+    wall_thickness_m: float = 0.30
+    start_x_m: float = 1.0
+    goal_margin_x_m: float = 1.0
+    waypoint_step_m: float = 0.30
+    resolution_m: float = 0.05
+    pallet_width_m: float = 1.1
+    pallet_length_m: float = 2.0
+    num_pallets_min: int = 1
+    num_pallets_max: int = 3
+    min_passage_m: float = 1.3
+    small_length_range_m: Tuple[float, float] = (1.0, 1.2)
+    small_width_range_m: Tuple[float, float] = (1.0, 1.2)
+    large_length_range_m: Tuple[float, float] = (1.8, 2.2)
+    large_width_range_m: Tuple[float, float] = (1.1, 1.3)
+    large_fraction: float = 0.4
+    holes_enabled: bool = True
+    holes_count_pairs: int = 1
+    holes_x_lo_m: float = 14.0
+    holes_x_hi_m: float = 17.5
+    holes_open_len_m: float = 1.6
+    holes_min_spacing_m: float = 1.5
+    holes_pair_x_candidates: Tuple[float, ...] = ()
 
 
 class BaseCorridorGenerator(ABC):
@@ -501,3 +553,40 @@ class OMCFGenerator(BaseCorridorGenerator):
         goal_xy = (float(goal_x), float(cy))
 
         return grid, waypoints, start_pose, goal_xy, info
+
+
+def create_blockage_scenario(
+    cfg: Optional[BlockageScenarioConfig] = None,
+    rng: Optional[np.random.Generator] = None,
+) -> tuple[
+    np.ndarray,  # occupancy grid: True=occupied
+    np.ndarray,  # waypoints: shape (N, 2)
+    tuple[float, float, float],  # start pose (x, y, theta)
+    tuple[float, float],  # goal xy
+    dict[str, float],  # info dict with metadata
+]:
+    """Generate a blockage-only scenario with corridor and pallets.
+
+    Grid convention: True = occupied; indices [row, col] = [y, x].
+    """
+    c = cfg or BlockageScenarioConfig()
+    r = rng or np.random.default_rng()
+    gen = BlockageGenerator(c, r)
+    return gen.generate()
+
+
+def create_omcf_scenario(
+    cfg: Optional[OMCFConfig] = None,
+    rng: Optional[np.random.Generator] = None,
+) -> Tuple[
+    np.ndarray,
+    np.ndarray,
+    Tuple[float, float, float],
+    Tuple[float, float],
+    Dict[str, object],
+]:
+    """Generate an occluded merge & counterflow corridor."""
+    c = cfg or OMCFConfig()
+    r = rng or np.random.default_rng()
+    gen = OMCFGenerator(c, r)
+    return gen.generate()

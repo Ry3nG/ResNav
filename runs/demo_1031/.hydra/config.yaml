@@ -50,7 +50,7 @@ env:
     lateral:
       spawn_rate_hz: 0.2
       spawn_anywhere: true
-      safe_spawn_distance_m: 3.0  # Fixed: was 210 (typo)
+      safe_spawn_distance_m: 2.0  # Fixed: was 210 (typo)
       lanes: [center, up, down]
 
     longitudinal:
@@ -67,7 +67,7 @@ env:
     # Guardrail parameters
     kill_margin_m: 0.5
     max_concurrent: 10
-    reflect_walls: false
+    reflect_walls: True
 
   viz:
     show_inflated: false
