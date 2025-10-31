@@ -23,7 +23,7 @@ from amr_env.sim import movers
 
 from .observation_builder import ObservationBuilder, ObservationData
 from .reward_manager import RewardManager
-from .scenario_service import ScenarioService, ScenarioSample
+from amr_env.sim.scenario_manager import ScenarioManager, ScenarioSample
 
 
 class ResidualNavEnv(gym.Env):
@@ -65,7 +65,7 @@ class ResidualNavEnv(gym.Env):
         )
 
         # Helper components
-        self._scenario_service = ScenarioService(
+        self._scenario_manager = ScenarioManager(
             env_cfg, robot_radius_m=self.radius_m, resolution_m=self.resolution_m
         )
         self._obs_builder = ObservationBuilder(self.lidar)
@@ -132,7 +132,7 @@ class ResidualNavEnv(gym.Env):
 
     def seed(self, seed: int | None = None):
         if seed is not None:
-            self._scenario_service.set_seed(seed)
+            self._scenario_manager.set_seed(seed)
             self.lidar.set_seed(seed)
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
@@ -140,7 +140,7 @@ class ResidualNavEnv(gym.Env):
         if seed is not None:
             self.seed(seed)
 
-        self._scenario = self._scenario_service.sample()
+        self._scenario = self._scenario_manager.sample()
         self._reward_manager.reset()
         self._obs_builder.reset()
 

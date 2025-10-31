@@ -1,4 +1,3 @@
-# Phase I: Temporary partial blockage only; no dynamic movers.
 name: blockage
 map:
   size_m: [20.0, 20.0]
