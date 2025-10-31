@@ -66,6 +66,14 @@ def build_policy_kwargs(
             "temporal_enabled": bool(fe_cfg.get("temporal_enabled", False)),
             "temporal_kernel_size": int(fe_cfg.get("temporal_kernel_size", 3)),
             "temporal_dilation": int(fe_cfg.get("temporal_dilation", 1)),
+            # New temporal block options
+            "temporal_ks_list": list(fe_cfg.get("temporal_ks_list", [3, 5, 7])),
+            "temporal_causal": bool(fe_cfg.get("temporal_causal", False)),
+            "temporal_se_reduction": int(fe_cfg.get("temporal_se_reduction", 8)),
+            # Optional regularization and pooling controls
+            "use_batch_norm": bool(fe_cfg.get("use_batch_norm", False)),
+            "dropout_p": float(fe_cfg.get("dropout_p", 0.0)),
+            "pool_out_len": int(fe_cfg.get("pool_out_len", 8)),
         }
     return policy_kwargs
 

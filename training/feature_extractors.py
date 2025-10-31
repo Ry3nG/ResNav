@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 from gymnasium import spaces
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from training.temporal_blocks import TemporalPyramidDS
+
 
 
 class LiDAR1DConvExtractor(BaseFeaturesExtractor):
@@ -43,6 +45,12 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
         temporal_enabled: bool = False,
         temporal_kernel_size: int = 3,
         temporal_dilation: int = 1,
+        temporal_ks_list: list[int] | None = None,
+        temporal_causal: bool = False,
+        temporal_se_reduction: int = 8,
+        use_batch_norm: bool = False,
+        dropout_p: float = 0.0,
+        pool_out_len: int = 8,
     ) -> None:
         # Compute total features dim before calling super
         self._out_dim = int(out_dim)
@@ -59,6 +67,14 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
         self.temporal_enabled = bool(temporal_enabled)
         self._temporal_kernel_size = int(temporal_kernel_size)
         self._temporal_dilation = int(temporal_dilation)
+        self._temporal_causal = bool(temporal_causal)
+        self._temporal_se_reduction = int(temporal_se_reduction)
+        self._temporal_ks_list = (
+            list(temporal_ks_list) if temporal_ks_list is not None else [3, 5, 7]
+        )
+        self._use_batch_norm = bool(use_batch_norm)
+        self._dropout_p = float(dropout_p)
+        self._pool_out_len = int(pool_out_len)
 
         # LiDAR conv spec
         if lidar_channels is None:
@@ -69,40 +85,38 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
 
         layers: list[nn.Module] = []
         in_ch = self.lidar_k  # frames as channels
-        L = self.lidar_beams
         for ch, ks in zip(lidar_channels, kernel_sizes):
             pad = ks // 2
-            layers += [nn.Conv1d(in_ch, ch, kernel_size=ks, padding=pad), nn.ReLU()]
+            layers.append(nn.Conv1d(in_ch, ch, kernel_size=ks, padding=pad))
+            if self._use_batch_norm:
+                layers.append(nn.BatchNorm1d(ch))
+            layers.append(nn.ReLU())
+            if self._dropout_p > 0.0:
+                layers.append(nn.Dropout(self._dropout_p))
             in_ch = ch
         # Adaptive pooling to small fixed length for stability
-        layers += [nn.AdaptiveAvgPool1d(8)]
+        layers += [nn.AdaptiveAvgPool1d(self._pool_out_len)]
         self.lidar_conv = nn.Sequential(*layers)
 
-        # Optional temporal conv along K (time) dimension using depthwise conv per angle
+        # Optional temporal block along K (time) using multi-scale depthwise-separable convs
         # Only register when enabled to retain strict backward compatibility for checkpoints
         if self.temporal_enabled:
-            # Input for temporal conv will be shaped as (B, beams, K)
-            # Keep length by padding = dilation * (k-1) // 2
-            k = max(1, self._temporal_kernel_size)
-            d = max(1, self._temporal_dilation)
-            pad_t = (d * (k - 1)) // 2
-            self.temporal_conv = nn.Conv1d(
-                in_channels=self.lidar_beams,
-                out_channels=self.lidar_beams,
-                kernel_size=k,
-                padding=pad_t,
-                dilation=d,
-                groups=self.lidar_beams,
+            ks_list = self._temporal_ks_list if isinstance(self._temporal_ks_list, list) else [3, 5, 7]
+            self.temporal_block = TemporalPyramidDS(
+                beams=self.lidar_beams,
+                ks_list=ks_list,
+                dilation=self._temporal_dilation,
+                causal=bool(self._temporal_causal),
+                se_reduction=int(self._temporal_se_reduction),
             )
-            self.temporal_act = nn.ReLU()
 
         # Branch heads for kin/path (tiny MLPs)
         self.kin_head = nn.Sequential(nn.Linear(4, kin_dim), nn.ReLU())
         self.path_head = nn.Sequential(nn.Linear(8, path_dim), nn.ReLU())
 
         # Fusion MLP to target out_dim
-        # lidar output size: last_channels * 8
-        lidar_feat_dim = in_ch * 8
+        # lidar output size: last_channels * pool_out_len
+        lidar_feat_dim = in_ch * self._pool_out_len
         fused_in = lidar_feat_dim + kin_dim + path_dim
         self.fusion = nn.Sequential(
             nn.Linear(fused_in, max(self._out_dim, 64)),
@@ -120,12 +134,11 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
             lidar.shape[1] == self.lidar_k * self.lidar_beams
         ), f"Unexpected lidar dim {lidar.shape[1]} ≠ {self.lidar_k}*{self.lidar_beams}"
         lidar = lidar.view(B, self.lidar_k, self.lidar_beams)
-        # Optional temporal conv along K (time) per angle beam
+        # Optional temporal block along K (time) per angle beam
         if self.temporal_enabled:
             # (B, K, beams) -> (B, beams, K)
             lidar_t = lidar.transpose(1, 2)
-            lidar_t = self.temporal_conv(lidar_t)
-            lidar_t = self.temporal_act(lidar_t)
+            lidar_t = self.temporal_block(lidar_t)
             # (B, beams, K) -> (B, K, beams)
             lidar = lidar_t.transpose(1, 2)
         # Conv over beams with frames as channels

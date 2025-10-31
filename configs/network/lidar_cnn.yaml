@@ -1,13 +1,22 @@
 feature_extractor:
   lidar_branch: cnn1d
   # Optional tuning for LiDAR conv extractor
-  lidar_k: 12           # must match env.wrappers.frame_stack.k
-  lidar_beams: 24      # must match env.lidar.beams
   lidar_channels: [16, 32, 16]
   kernel_sizes: [3, 5, 3]
   out_dim: 128
   kin_dim: 16
   path_dim: 16
+
+  # Temporal convolution improvements
+  temporal_enabled: true
+  temporal_ks_list: [3, 5, 7]
+  temporal_dilation: 1
+  temporal_causal: false          # consider true in deployment
+  temporal_se_reduction: 8
+  # Optional stability/regularization controls
+  use_batch_norm: false
+  dropout_p: 0.0
+  pool_out_len: 8
 
 actor:
   hidden_sizes: [128, 128]
