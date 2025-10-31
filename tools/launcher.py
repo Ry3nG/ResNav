@@ -149,6 +149,7 @@ def build_train_command() -> tuple[str, str]:
 def build_render_command() -> tuple[str, str]:
     print("\nExamples:")
     print("runs/demo_1017/best")
+    print("runs/demo_1031/best")
 
     model_path = prompt_text("Model directory (best/final/ckpt_step_N)", "")
     if not model_path:
