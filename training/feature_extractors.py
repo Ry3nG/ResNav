@@ -37,6 +37,9 @@ class LiDAR1DConvExtractor(BaseFeaturesExtractor):
         out_dim: int = 128,
         kin_dim: int = 16,
         path_dim: int = 16,
+        # Backward-compat shim: accept and ignore legacy kwargs from old checkpoints
+        temporal_enabled: bool | None = None,
+        **_unused_kwargs: Any,
     ) -> None:
         # Compute total features dim before calling super
         self._out_dim = int(out_dim)
