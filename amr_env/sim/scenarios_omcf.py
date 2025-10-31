@@ -1,7 +1,7 @@
 """Scenario generator for the occluded merge & counterflow (OMCF) setup.
 
 This reuses the blockage corridor but carves wall holes near the goal side
-and optionally drops occluding pallets just upstream of the holes.
+so dynamic movers can emerge through the openings.
 """
 
 from __future__ import annotations
@@ -41,13 +41,6 @@ class OMCFConfig:
     holes_open_len_m: float = 1.6
     holes_min_spacing_m: float = 1.5
     holes_pair_x_candidates: Tuple[float, ...] = ()
-    occ_enabled: bool = True
-    occ_per_side_min: int = 0
-    occ_per_side_max: int = 2
-    occ_side_prob: float = 0.7
-    occ_size_lx_m: float = 1.2
-    occ_size_wy_m: float = 0.8
-    occ_offsets_x_from_hole: Tuple[float, ...] = (-1.2, -0.4)
 
 
 def create_omcf_scenario(
@@ -205,42 +198,6 @@ def create_omcf_scenario(
         else:
             small_cnt += 1
 
-    occluders: List[Tuple[float, float, float, float, str]] = []
-    if c.occ_enabled and holes_x:
-        offsets = tuple(float(v) for v in c.occ_offsets_x_from_hole) or (-0.8,)
-        prob = float(np.clip(c.occ_side_prob, 0.0, 1.0))
-        side_min = max(0, int(c.occ_per_side_min))
-        side_max = max(side_min, int(c.occ_per_side_max))
-        for x_h in holes_x:
-            for side_top in (True, False):
-                if r.random() > prob:
-                    continue
-                n_side = int(r.integers(side_min, side_max + 1)) if side_max >= side_min else side_min
-                n_side = max(0, n_side)
-                if n_side == 0:
-                    continue
-                replace = len(offsets) < n_side
-                chosen_offsets = np.atleast_1d(r.choice(offsets, size=n_side, replace=replace))
-                for offset in chosen_offsets:
-                    x_center = x_h + float(offset)
-                    length = float(c.occ_size_lx_m)
-                    width = float(c.occ_size_wy_m)
-                    if side_top:
-                        y_edge = y_top
-                        y_center = y_edge - width / 2.0
-                        tag = "top"
-                    else:
-                        y_edge = y_bot
-                        y_center = y_edge + width / 2.0
-                        tag = "bottom"
-                    fill_rect(
-                        x_center - length / 2.0,
-                        y_center - width / 2.0,
-                        x_center + length / 2.0,
-                        y_center + width / 2.0,
-                    )
-                    occluders.append((x_center, y_center, length, width, tag))
-
     n_wp = max(2, int(round((goal_x - start_x) / max(1e-6, c.waypoint_step_m))))
     xs = np.linspace(start_x, goal_x, n_wp)
     waypoints = np.stack([xs, np.full_like(xs, cy)], axis=1)
@@ -250,7 +207,6 @@ def create_omcf_scenario(
         "holes_x": [float(x) for x in holes_x],
         "y_top": float(y_top),
         "y_bot": float(y_bot),
-        "occluders": occluders,
         "pallets": pallets,
         "pallet_counts": {"small": int(small_cnt), "large": int(large_cnt)},
     }

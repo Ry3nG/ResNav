@@ -69,22 +69,6 @@ def compute_terms(
         xi_d = max((d_safe - dmin) / max(d_safe, 1e-6), 0.0) ** 2
         path_pen = -lam_bar * xi_d
 
-        if bool(safety.get("ttc_enabled", False)):
-            tau_safe = float(safety.get("tau_safe_s", 1.5))
-            lam_ttc = float(safety.get("lambda_ttc", 3.0))
-            true_ranges = reward_cfg.get("_true_ranges")
-            prev_true_ranges = reward_cfg.get("_prev_true_ranges")
-            dt = float(reward_cfg.get("_dt", 0.1))
-            if true_ranges is not None and prev_true_ranges is not None:
-                dr = (true_ranges - prev_true_ranges) / max(dt, 1e-6)
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    ttc = np.where(dr < 0.0, true_ranges / (-dr + 1e-3), np.inf)
-                ttc_min = float(np.min(ttc))
-                xi_ttc = max(
-                    (1.0 / max(ttc_min, 1e-6) - 1.0 / max(tau_safe, 1e-6)),
-                    0.0,
-                ) ** 2
-                path_pen += -lam_ttc * xi_ttc
     else:
         ctx: Any = reward_cfg.get("_ctx")
         if ctx is None:

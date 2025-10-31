@@ -29,18 +29,14 @@ class RewardManager:
         self,
         robot_cfg: dict[str, Any],
         reward_cfg: dict[str, Any],
-        dt: float,
     ) -> None:
         self._robot_cfg = robot_cfg
         self._reward_cfg = reward_cfg
-        self._dt = float(dt)
         self._prev_goal_dist: float | None = None
-        self._prev_true_ranges: np.ndarray | None = None
         self._last_breakdown: dict[str, Any] = {}
 
     def reset(self) -> None:
         self._prev_goal_dist = None
-        self._prev_true_ranges = None
         self._last_breakdown = {}
 
     @property
@@ -57,11 +53,9 @@ class RewardManager:
         truncated: bool,
         path_context: Any | None,
         clearance_m: float | None,
-        true_ranges: np.ndarray | None,
     ) -> RewardResult:
         reward_cfg_with_ctx = dict(self._reward_cfg)
         reward_cfg_with_ctx["_ctx"] = path_context
-        reward_cfg_with_ctx["_dt"] = self._dt
 
         safety_cfg = self._reward_cfg.get("safety") or {}
         if not isinstance(safety_cfg, dict):
@@ -70,22 +64,8 @@ class RewardManager:
 
         if use_map_barrier:
             reward_cfg_with_ctx["_dmin"] = float(clearance_m) if clearance_m is not None else None
-            ttc_enabled = bool(safety_cfg.get("ttc_enabled", False))
-            if ttc_enabled and true_ranges is not None:
-                reward_cfg_with_ctx["_true_ranges"] = true_ranges.astype(np.float32)
-                reward_cfg_with_ctx["_prev_true_ranges"] = (
-                    None
-                    if self._prev_true_ranges is None
-                    else self._prev_true_ranges.astype(np.float32)
-                )
-            else:
-                reward_cfg_with_ctx["_true_ranges"] = None
-                reward_cfg_with_ctx["_prev_true_ranges"] = None
         else:
             reward_cfg_with_ctx["_dmin"] = None
-            reward_cfg_with_ctx["_true_ranges"] = None
-            reward_cfg_with_ctx["_prev_true_ranges"] = None
-            ttc_enabled = False
 
         terms, new_prev_goal = compute_terms(
             pose,
@@ -99,8 +79,6 @@ class RewardManager:
             truncated,
         )
         self._prev_goal_dist = new_prev_goal
-        if ttc_enabled:
-            self._prev_true_ranges = reward_cfg_with_ctx["_true_ranges"]
 
         weights = self._reward_cfg["weights"]
         total, contrib = apply_weights(terms, weights)

@@ -69,7 +69,7 @@ class ResidualNavEnv(gym.Env):
             env_cfg, robot_radius_m=self.radius_m, resolution_m=self.resolution_m
         )
         self._obs_builder = ObservationBuilder(self.lidar)
-        self._reward_manager = RewardManager(robot_cfg, reward_cfg, self.dt)
+        self._reward_manager = RewardManager(robot_cfg, reward_cfg)
 
         # Observation and action spaces
         n_beams = int(lidar_cfg["beams"])
@@ -308,15 +308,12 @@ class ResidualNavEnv(gym.Env):
             safety_cfg = {}
         use_map_barrier = str(safety_cfg.get("source", "")).lower() == "map"
         clearance = None
-        true_ranges = None
         if use_map_barrier:
             true_ranges = self.lidar.sense(
                 self._grid_raw_curr, self._model.as_pose(), noise=False
             )
             static_clear = self._clearance_iso()
             clearance = min(static_clear, float(np.min(true_ranges)))
-            if not bool(safety_cfg.get("ttc_enabled", False)):
-                true_ranges = None
 
         reward_result = self._reward_manager.compute(
             self._model.as_pose(),
@@ -327,7 +324,6 @@ class ResidualNavEnv(gym.Env):
             truncated,
             obs_data.context,
             clearance,
-            true_ranges,
         )
 
         breakdown = dict(reward_result.breakdown)

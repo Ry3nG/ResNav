@@ -25,7 +25,6 @@ def test_env_detects_dynamic_collision(monkeypatch):
                 "count_pairs": 1,
                 "x_range_m": [7.0, 7.0],
                 "opening_len_m": 1.5,
-                "occluders": {"enabled": False},
             },
         },
         "wrappers": {

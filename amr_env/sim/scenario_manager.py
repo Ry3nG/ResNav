@@ -94,7 +94,6 @@ class ScenarioManager:
         elif scenario_name == "omcf":
             map_cfg = self.env_cfg["map"]
             holes_cfg = map_cfg.get("holes", {})
-            occ_cfg = holes_cfg.get("occluders", {})
             small_cfg = map_cfg.get("small_static", {})
             large_cfg = map_cfg.get("large_static", {})
 
@@ -103,17 +102,6 @@ class ScenarioManager:
                 if isinstance(values, (list, tuple)) and len(values) == 2:
                     return (float(values[0]), float(values[1]))
                 return tuple(float(v) for v in default)
-
-            per_side_cfg = occ_cfg.get("per_side_count") or occ_cfg.get("count_per_side")
-            if isinstance(per_side_cfg, (list, tuple)) and len(per_side_cfg) == 2:
-                occ_per_side_min = int(per_side_cfg[0])
-                occ_per_side_max = int(per_side_cfg[1])
-            else:
-                fallback = int(occ_cfg.get("count", 0))
-                occ_per_side_min = 0 if fallback <= 0 else 1
-                occ_per_side_max = max(occ_per_side_min, fallback // max(1, int(holes_cfg.get("count_pairs", 1))))
-            occ_side_prob = float(occ_cfg.get("per_side_probability", occ_cfg.get("probability", 1.0)))
-            occ_side_prob = float(np.clip(occ_side_prob, 0.0, 1.0))
 
             cfg = OMCFConfig(
                 map_width_m=float(map_cfg["size_m"][0]),
@@ -153,15 +141,6 @@ class ScenarioManager:
                 ),
                 holes_pair_x_candidates=tuple(
                     float(v) for v in holes_cfg.get("pair_x_candidates_m", [])
-                ),
-                occ_enabled=bool(occ_cfg.get("enabled", True)),
-                occ_per_side_min=occ_per_side_min,
-                occ_per_side_max=occ_per_side_max,
-                occ_side_prob=occ_side_prob,
-                occ_size_lx_m=float(occ_cfg.get("size_m", [1.2, 0.8])[0]),
-                occ_size_wy_m=float(occ_cfg.get("size_m", [1.2, 0.8])[1]),
-                occ_offsets_x_from_hole=tuple(
-                    float(v) for v in occ_cfg.get("offset_x_from_hole_m", [-1.2, -0.4])
                 ),
             )
             generator = create_omcf_scenario
