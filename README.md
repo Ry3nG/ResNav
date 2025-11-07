@@ -2,25 +2,33 @@
 
 Residual policy + conventional tracker for AMR local navigation in a 2D factory map. The RL agent outputs a residual action on top of Pure Pursuit.
 
-## Assignment 2 Demo
-> setup the environment with `make setup` first.
-> `training/feature_extractors.py` is the feature extractor network implementation for this week
+## Assignment 3 Demo
 
-### 1) Try the demo
-> Find the generated video in `runs/demo_1031/outputs/demo.mp4`
+### 1) Launch the standard training run
+Now ships a one-file launcher.
 
 ```bash
-make demo1031
+python train_demo.py
 ```
-This will run `python training/rollout.py --model 'runs/demo_1031/best' --record 'runs/demo_1031/outputs/demo.mp4' --steps 300 --deterministic --seed 20021213` to visualize an example of the trained agent probe and wait in front of a junction with dynamic obstacles.
 
-### 2) Try failure cases
-Activate the environment and run the following command to try failure cases.
-`python training/rollout.py --model 'runs/demo_1031/best' --record 'runs/demo_1031/outputs/demo.mp4' --steps 300 --deterministic --seed 20030413`
-The agent hasn't learned how to back off and wait in a safe place.
+By default this executes:
 
-### 3) Try train the model
-run `python training/train_sac.py env=omcf robot=allow_reverse reward=lower_w_path algo=sac network=lidar_cnn wandb=default run.vec_envs=20 run.total_timesteps=10000000 run.seed=0` to train the model.
+```
+python training/train_sac.py env=omcf robot=allow_reverse reward=lower_w_path \
+    algo=sac network=lidar_cnn wandb=default \
+    run.vec_envs=20 run.total_timesteps=200000 run.seed=20030413
+```
+
+Add overrides such as `--override run.vec_envs=10` when needed.
+
+### 2) Run inference on a saved model
+For playback or grading, point `inference_demo.py` at any run directory (e.g. `runs/demo_1031/best`, `runs/demo_1107/final`):
+
+```bash
+python inference_demo.py --path /home/gong-zerui/code/ResNav/runs/demo_1031/best --render --deterministic
+```
+
+Recording defaults to `demo.mp4` in the project root; pass `--record none` to disable or set a custom path.
 
 
 ## Quickstart

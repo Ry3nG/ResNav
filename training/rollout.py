@@ -96,7 +96,7 @@ def main():
         default="",
         help="Model directory: best/ | final/ | checkpoints/ckpt_step_N/",
     )
-    parser.add_argument("--record", type=str, default="")
+    parser.add_argument("--record", type=str, default=None)
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--steps", type=int, default=600)
     parser.add_argument("--seed", type=int, default=42)
@@ -201,6 +201,10 @@ def main():
         )
 
     frames = []
+    record_arg = args.record
+    if isinstance(record_arg, str) and record_arg.strip().lower() in {"", "none"}:
+        args.record = ""
+
     if args.render or args.record:
         map_size = env_cfg["map"]["size_m"]
         viz = env_cfg["viz"]
