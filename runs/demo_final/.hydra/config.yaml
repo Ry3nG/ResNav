@@ -165,7 +165,7 @@ wandb:
   upload_artifacts: true
 run:
   dt: 0.1
-  max_steps: 300
+  max_steps: 600
   vec_envs: 20
   total_timesteps: 20000000
   eval_interval_episodes: 50
