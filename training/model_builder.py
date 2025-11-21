@@ -6,6 +6,7 @@ Extracted from training/common.py to separate model-specific logic.
 from __future__ import annotations
 
 from typing import Any
+import os
 
 import torch.nn as nn
 from stable_baselines3 import SAC
@@ -87,6 +88,19 @@ def _init_model(
     Returns:
         Initialized SAC model
     """
+    if algo_name.lower() != "sac":
+        raise ValueError(f"Unsupported algorithm: {algo_name}")
+
+    load_path = str(algo_cfg.get("load_path") or "")
+    if load_path:
+        if not os.path.exists(load_path):
+            raise FileNotFoundError(f"SAC load_path not found: {load_path}")
+        print(f"\n{'='*60}")
+        print(f"🔄 Loading pretrained SAC model from checkpoint:")
+        print(f"   {load_path}")
+        print(f"{'='*60}\n")
+        return SAC.load(load_path, env=train_env, tensorboard_log="tb_logs")
+
     return SAC(
         policy="MultiInputPolicy",
         env=train_env,

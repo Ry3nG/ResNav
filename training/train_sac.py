@@ -53,6 +53,32 @@ def main(cfg: DictConfig) -> None:
         env_cfg, robot_cfg, reward_cfg, run_cfg, algo_cfg
     )
 
+    # Load VecNormalize stats if continuing from previous stage
+    load_vecnorm = str(algo_cfg.get("load_vecnorm") or "")
+    if load_vecnorm and os.path.exists(load_vecnorm):
+        print(f"\n{'='*60}")
+        print(f"🔄 Loading VecNormalize stats from previous stage:")
+        print(f"   {load_vecnorm}")
+        print(f"{'='*60}\n")
+
+        # Load saved stats
+        saved_vecnorm = VecNormalize.load(load_vecnorm, train_env.venv if hasattr(train_env, 'venv') else train_env)
+
+        # Copy observation running mean/std to current train_env
+        if isinstance(train_env, VecNormalize):
+            train_env.obs_rms = saved_vecnorm.obs_rms
+            train_env.ret_rms = saved_vecnorm.ret_rms
+            print(f"   ✓ Loaded observation statistics to train_env")
+
+        # Also update eval_env
+        if isinstance(eval_env, VecNormalize):
+            eval_env.obs_rms = saved_vecnorm.obs_rms
+            eval_env.training = False
+            eval_env.norm_reward = False
+            print(f"   ✓ Loaded observation statistics to eval_env")
+    elif load_vecnorm:
+        print(f"[WARN] VecNormalize file not found: {load_vecnorm}")
+
     # Build and initialize model
     policy_kwargs = build_policy_kwargs(network_cfg, env_cfg, algo_name="sac")
     model = _init_model("sac", algo_cfg, policy_kwargs, train_env, seed)

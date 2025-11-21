@@ -28,6 +28,7 @@ class Colors:
     inflated_grid: tuple[int, int, int] = (80, 20, 20)
     robot: tuple[int, int, int] = (50, 180, 255)
     robot_heading: tuple[int, int, int] = (0, 255, 0)
+    robot_trail: tuple[int, int, int] = (0, 200, 255)
     lidar_ray: tuple[int, int, int] = (255, 255, 0)
     lidar_hit: tuple[int, int, int] = (255, 0, 0)
     path: tuple[int, int, int] = (0, 200, 200)
@@ -40,6 +41,8 @@ class Colors:
     # Dynamic mover colors
     mover_lateral: tuple[int, int, int] = (255, 69, 0)  # Red-Orange (counterflow danger)
     mover_longitudinal: tuple[int, int, int] = (138, 43, 226)  # Blue-Violet (merge from side)
+    mover_trail_lateral: tuple[int, int, int] = (255, 160, 120)
+    mover_trail_longitudinal: tuple[int, int, int] = (180, 120, 255)
 
 
 @dataclass
@@ -112,6 +115,14 @@ class Renderer:
         pygame.draw.line(
             self.screen, self.colors.robot_heading, (sx, sy), (hpx, hpy), width=2
         )
+
+    def draw_trail(
+        self, points: list[tuple[float, float]], color: tuple[int, int, int], width: int = 3
+    ) -> None:
+        if not points or len(points) < 2:
+            return
+        pts = [self.world_to_screen(float(x), float(y)) for x, y in points]
+        pygame.draw.lines(self.screen, color, False, pts, width=width)
 
     def draw_lidar(
         self,
@@ -227,6 +238,8 @@ class Renderer:
         ] = None,
         hud: Optional[dict[str, float]] = None,
         movers: Optional[list] = None,
+        trajectory: Optional[list[tuple[float, float]]] = None,
+        mover_trails: Optional[list[tuple[list[tuple[float, float]], str]]] = None,
     ) -> "pygame.Surface":
         self.screen.fill(self.colors.background)
 
@@ -237,6 +250,17 @@ class Renderer:
             self.draw_grid(inflated_grid, self.colors.inflated_grid)
         if path is not None:
             self.draw_path(path, proj, lookahead)
+        if trajectory:
+            self.draw_trail(trajectory, self.colors.robot_trail, width=3)
+        if mover_trails:
+            for pts, mover_type in mover_trails:
+                if not pts or len(pts) < 2:
+                    continue
+                if mover_type == "longitudinal":
+                    color = self.colors.mover_trail_longitudinal
+                else:
+                    color = self.colors.mover_trail_lateral
+                self.draw_trail(pts, color, width=3)
 
         # Draw dynamic movers (before robot so robot appears on top)
         if movers is not None:

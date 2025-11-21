@@ -1,6 +1,6 @@
 v_max: 1.5
 w_max: 2.0
-v_min: -0.3
+v_min: -0.5
 radius_m: 0.45
 controller:
   lookahead_m: 1.2

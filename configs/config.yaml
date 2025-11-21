@@ -9,7 +9,7 @@ defaults:
 
 run:
   dt: 0.1  # 10 Hz control & LiDAR
-  max_steps: 300
+  max_steps: 600
   vec_envs: 20
   total_timesteps: 10000000
   eval_interval_episodes: 50
