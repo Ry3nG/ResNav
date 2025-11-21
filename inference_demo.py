@@ -9,6 +9,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+DEFAULT_MODEL_PATH = "runs/demo_final/final"
+DEFAULT_ENV_CFG = "configs/env/eval_hard.yaml"
+DEFAULT_SEED = 20030413
+
 
 def build_command(args: argparse.Namespace) -> list[str]:
     cmd = [sys.executable, "training/rollout.py", "--model", args.path]
@@ -41,8 +45,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--path",
-        required=True,
-        help="Path to a model artifact or run directory (e.g. runs/demo_1031/best)",
+        default=DEFAULT_MODEL_PATH,
+        help=(
+            "Path to a model artifact or run directory. "
+            "Defaults to the final submission checkpoint."
+        ),
     )
     parser.add_argument(
         "--vecnorm",
@@ -58,7 +65,7 @@ def main() -> None:
     parser.add_argument(
         "--seed",
         type=int,
-        default=42,
+        default=DEFAULT_SEED,
         help="Evaluation seed",
     )
     parser.add_argument(
@@ -79,7 +86,7 @@ def main() -> None:
     parser.add_argument(
         "--env-cfg",
         dest="env_cfg",
-        default="",
+        default=DEFAULT_ENV_CFG,
         help="Override environment config path",
     )
     parser.add_argument(
@@ -102,15 +109,25 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    repo_root = Path(__file__).resolve().parent
+
     path_obj = Path(args.path)
     if not path_obj.exists():
-        parser.error(f"Path does not exist: {args.path}")
+        alt_path = repo_root / args.path
+        if alt_path.exists():
+            path_obj = alt_path
+        else:
+            parser.error(f"Path does not exist: {args.path}")
 
-    repo_root = Path(__file__).resolve().parent
+    try:
+        relative_path = path_obj.relative_to(repo_root)
+        args.path = str(relative_path)
+    except ValueError:
+        args.path = str(path_obj)
 
     record_arg = args.record
     if record_arg is None:
-        args.record = str(repo_root / "demo.mp4")
+        args.record = "demo.mp4"
     elif isinstance(record_arg, str) and record_arg.strip().lower() in {"", "none"}:
         args.record = ""
     else:

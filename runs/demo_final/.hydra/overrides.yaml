@@ -1,0 +1,11 @@
+- env=eval_hard
+- robot=allow_reverse
+- reward=lower_w_path
+- algo=sac
+- network=lidar_cnn
+- wandb=default
+- run.vec_envs=20
+- run.total_timesteps=20000000
+- run.seed=20021213
+- +run.curriculum_mix.configs=[eval_basic,eval_medium,eval_hard]
+- +run.curriculum_mix.ratios=[0.1,0.3,0.6]

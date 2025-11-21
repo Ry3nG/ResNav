@@ -43,7 +43,7 @@ def _ensure_parent(path: str | Path) -> Path:
 
 def _save_trajectory_csv(path: str, data: np.ndarray) -> None:
     out = _ensure_parent(path)
-    header = "t_sec,x_m,y_m,theta_rad,v_cmd_mps,w_cmd_rps,goal_dist_m"
+    header = "t_sec,x_m,y_m,theta_rad,v_cmd_mps,w_cmd_rps,goal_dist_m,v_track,w_track,dv,dw"
     np.savetxt(out, data, delimiter=",", header=header, comments="")
 
 
@@ -344,7 +344,7 @@ def main():
     goal_xy_global = (
         tuple(map(float, scenario.goal_xy)) if scenario is not None else (0.0, 0.0)
     )
-    trajectory_samples: list[tuple[float, float, float, float, float, float, float]] = []
+    trajectory_samples: list[tuple[float, float, float, float, float, float, float, float, float, float, float]] = []
     mover_samples: list[tuple[float, float]] = []
     robot_trail_pts: list[tuple[float, float]] = []
     mover_trail_map: dict[int, dict[str, Any]] = {}
@@ -360,6 +360,7 @@ def main():
             goal_dist0 = float(
                 np.hypot(goal_xy_global[0] - pose0[0], goal_xy_global[1] - pose0[1])
             )
+            # Initial step: no tracker command yet, residual = 0
             trajectory_samples.append(
                 (
                     sim_time,
@@ -369,6 +370,10 @@ def main():
                     float(last_u0[0]),
                     float(last_u0[1]),
                     goal_dist0,
+                    0.0,  # v_track
+                    0.0,  # w_track
+                    0.0,  # dv
+                    0.0,  # dw
                 )
             )
             sim_time += dt
@@ -503,6 +508,16 @@ def main():
             goal_dist = float(
                 np.hypot(goal_xy_global[0] - pose[0], goal_xy_global[1] - pose[1])
             )
+            # Compute tracker command and residual
+            waypoints = payload.get("waypoints")
+            if waypoints is not None and len(waypoints) > 0:
+                v_track, w_track = compute_u_track(
+                    pose, np.asarray(waypoints), lookahead_m, v_nominal
+                )
+            else:
+                v_track, w_track = 0.0, 0.0
+            dv = float(last_u[0]) - v_track
+            dw = float(last_u[1]) - w_track
             trajectory_samples.append(
                 (
                     sim_time,
@@ -512,6 +527,10 @@ def main():
                     float(last_u[0]),
                     float(last_u[1]),
                     goal_dist,
+                    float(v_track),
+                    float(w_track),
+                    float(dv),
+                    float(dw),
                 )
             )
             sim_time += dt

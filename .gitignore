@@ -273,3 +273,5 @@ configs/wandb/*
 !runs/demo_1017/**
 !runs/demo_1031/
 !runs/demo_1031/**
+!runs/demo_final/
+!runs/demo_final/**
